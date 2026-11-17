@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      ROADSENSE_CORS_ORIGINS: ${ROADSENSE_CORS_ORIGINS:-http://localhost:8080}
+      ROADSENSE_ENABLED_MODELS: ${ROADSENSE_ENABLED_MODELS:-mobilenetv2,resnet50,efficientnetb0}
+      ROADSENSE_MODEL_CACHE: ${ROADSENSE_MODEL_CACHE:-1}
+      ROADSENSE_MAX_UPLOAD_BYTES: ${ROADSENSE_MAX_UPLOAD_BYTES:-8388608}
+      ROADSENSE_MAX_IMAGE_PIXELS: ${ROADSENSE_MAX_IMAGE_PIXELS:-24000000}
+    volumes:
+      - ./backend/models:/app/backend/models:ro
+      - ./backend/results:/app/backend/results:ro
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health', timeout=3).close()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+  frontend:
+    build: ./frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"

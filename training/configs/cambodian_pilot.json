@@ -1,0 +1,11 @@
+{
+  "batch_size": 8,
+  "head_epochs": 12,
+  "fine_tune_epochs": 0,
+  "fine_tune_layers": 0,
+  "dropout": 0.25,
+  "head_lr": 0.001,
+  "fine_tune_lr": 0.00001,
+  "seed": 42,
+  "patience": 4
+}
