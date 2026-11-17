@@ -19,6 +19,8 @@ uvicorn backend.app.main:app --host 0.0.0.0 --port "$PORT" --workers 1
 
 Set the host's health check to `/health`. Configure the variables in the root environment example and mount real `.keras` files and their versioned `.json` sidecars under `ROADSENSE_MODELS_DIR`. Mount evaluation outputs under `ROADSENSE_RESULTS_DIR`. A health response can succeed with zero installed models, which is useful for diagnosing storage and artifact configuration. The application uses HTTPS at the hosting proxy or load balancer. Match the proxy body limit to the API upload limit plus multipart framing.
 
+For the road-photo check, run `python -m backend.app.road_photo` from the repository root before starting the API. This downloads a checksum-verified SegFormer model to `backend/models/road-photo-segformer.onnx`, which the standard Compose setup mounts read-only. Set `ROADSENSE_ROAD_PHOTO_MODEL` to the mounted path when storing it separately. Inference runs on the backend without sending uploads to the model host. The supplied checkpoint is licensed for noncommercial research or evaluation. [NVIDIA model card](https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512) · [License](https://github.com/NVlabs/SegFormer/blob/master/LICENSE).
+
 For a local container run:
 
 ```sh

@@ -8,8 +8,14 @@ import numpy as np
 from PIL import Image
 
 from backend.app.main import create_app
-from backend.app.preprocess import CLASSES, INPUT_SIZE, MODELS, PREPROCESSING
+from backend.app.preprocess import CLASSES, INPUT_SIZE, MODELS, PREPROCESSING, InvalidImage
 from backend.app.registry import Registry, file_hash
+
+
+def check_fixture_photo(image):
+    red, green, blue = image.getpixel((0, 0))
+    if red < 200 or max(green, blue) >= 80:
+        raise InvalidImage("Invalid road photo. Choose an image with a clear road surface in the lower center.")
 
 
 def fixtures(directory, benchmarks=False):
@@ -59,5 +65,5 @@ if __name__ == "__main__":
     import uvicorn
 
     with TemporaryDirectory(prefix="roadsense-e2e-fixtures-") as temporary:
-        app = create_app(fixtures(Path(temporary), benchmarks=True))
+        app = create_app(fixtures(Path(temporary), benchmarks=True), photo_validator=check_fixture_photo)
         uvicorn.run(app, host="127.0.0.1", port=8129)

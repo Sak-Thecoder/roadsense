@@ -16,14 +16,21 @@ class InvalidImage(ValueError):
 
 
 def decode(data: bytes, max_pixels: int = 24_000_000) -> np.ndarray:
+    return image_pixels(decode_image(data, max_pixels))
+
+
+def image_pixels(image: Image.Image, size=INPUT_SIZE) -> np.ndarray:
+    return np.asarray(image.resize(size, Image.Resampling.BILINEAR), dtype=np.float32)
+
+
+def decode_image(data: bytes, max_pixels: int = 24_000_000) -> Image.Image:
     try:
         with Image.open(BytesIO(data)) as image:
             if image.format not in FORMATS or getattr(image, "n_frames", 1) != 1:
                 raise InvalidImage("Choose a single JPEG, PNG or WebP image.")
             if image.width * image.height > max_pixels:
                 raise InvalidImage("The image dimensions exceed the supported limit.")
-            rgb = ImageOps.exif_transpose(image).convert("RGB")
-            return np.asarray(rgb.resize(INPUT_SIZE, Image.Resampling.BILINEAR), dtype=np.float32)
+            return ImageOps.exif_transpose(image).convert("RGB")
     except (UnidentifiedImageError, OSError, SyntaxError, Image.DecompressionBombError) as exc:
         raise InvalidImage("The image could not be decoded. Choose a valid JPEG, PNG or WebP.") from exc
 

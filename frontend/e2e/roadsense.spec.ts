@@ -56,6 +56,22 @@ test('invalid upload, API failure and retry provide actionable feedback', async 
   await expect(page.getByRole('heading',{name:'Good road quality'})).toBeVisible()
 })
 
+test('a valid image rejected as non-road prompts for a replacement', async ({page}) => {
+  await page.goto('/')
+  await expect(page.getByText('3 models available')).toBeVisible()
+  await page.getByLabel('Choose a road photo').setInputFiles({
+    name:'non-road.png', mimeType:'image/png',
+    buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aXWQAAAAASUVORK5CYII=', 'base64'),
+  })
+  await page.getByRole('button',{name:'Analyze photo'}).click()
+  await expect(page.getByRole('alert')).toContainText('Invalid road photo.')
+  await expect(page.getByRole('button',{name:'Retry'})).toHaveCount(0)
+  await page.getByRole('link',{name:'Choose another photo'}).click()
+  await page.getByLabel('Choose a road photo').setInputFiles(photo)
+  await page.getByRole('button',{name:'Analyze photo'}).click()
+  await expect(page.getByRole('heading',{name:'Good road quality'})).toBeVisible()
+})
+
 test('camera capture yields a preview', async ({page},info) => {
   test.skip(info.project.name !== 'desktop', 'Fake Chromium camera enabled in desktop project')
   await page.goto('/')

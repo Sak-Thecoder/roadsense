@@ -7,8 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
-from .preprocess import CLASSES, MODELS, InvalidImage, decode
+from .preprocess import CLASSES, MODELS, InvalidImage, decode_image, image_pixels
 from .registry import Registry, Unavailable
+from .road_photo import RoadPhotoCheckUnavailable, RoadPhotoValidator, model_path
 from .schemas import Benchmark, Comparison, ModelInfo, Prediction
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -46,7 +47,7 @@ class UploadLimit:
         return await self.app(scope, replay, send)
 
 
-def create_app(registry=None, max_upload=None):
+def create_app(registry=None, max_upload=None, photo_validator=None):
     registry = registry if registry is not None else Registry(
         Path(os.getenv("ROADSENSE_MODELS_DIR", BACKEND / "models")),
         Path(os.getenv("ROADSENSE_RESULTS_DIR", BACKEND / "results")),
@@ -55,6 +56,7 @@ def create_app(registry=None, max_upload=None):
     )
     max_upload = max_upload or int(os.getenv("ROADSENSE_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
     max_pixels = int(os.getenv("ROADSENSE_MAX_IMAGE_PIXELS", "24000000"))
+    photo_validator = photo_validator if photo_validator is not None else RoadPhotoValidator(model_path())
     app = FastAPI(title="RoadSense", version="0.1.0", description="Road surface quality classification.")
     app.add_middleware(UploadLimit, limit=max_upload + 64 * 1024)
     app.add_middleware(CORSMiddleware,
@@ -66,6 +68,11 @@ def create_app(registry=None, max_upload=None):
         if name not in MODELS:
             raise HTTPException(404, "Unknown model.")
 
+    def validated_pixels(data):
+        image = decode_image(data, max_pixels)
+        photo_validator(image)
+        return image_pixels(image)
+
     async def pixels_from(image):
         try:
             data = await image.read(max_upload + 1)
@@ -74,9 +81,12 @@ def create_app(registry=None, max_upload=None):
         if len(data) > max_upload:
             raise HTTPException(413, "Image upload is too large.")
         try:
-            return await run_in_threadpool(decode, data, max_pixels)
+            return await run_in_threadpool(validated_pixels, data)
         except InvalidImage as exc:
             raise HTTPException(422, str(exc)) from exc
+        except RoadPhotoCheckUnavailable as exc:
+            log.exception("Road-photo check failed")
+            raise HTTPException(503, str(exc)) from exc
 
     @app.get("/health")
     def health():

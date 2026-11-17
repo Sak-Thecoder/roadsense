@@ -2,6 +2,12 @@ import type {Benchmark, Comparison, Health, Model, ModelInfo, Prediction} from '
 
 const base = (import.meta.env.VITE_API_BASE_URL || '/api').replace(/\/$/, '')
 
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message)
+  }
+}
+
 async function request<T>(path: string, signal?: AbortSignal, file?: File): Promise<T> {
   const controller = new AbortController()
   const abort = () => controller.abort(signal?.reason)
@@ -15,7 +21,7 @@ async function request<T>(path: string, signal?: AbortSignal, file?: File): Prom
     const response = await fetch(base + path, {method: file ? 'POST' : 'GET', body, signal: controller.signal})
     if (!response.ok) {
       const error = await response.json().catch(() => null)
-      throw new Error(typeof error?.detail === 'string' ? error.detail : `Request failed (${response.status}).`)
+      throw new ApiError(response.status, typeof error?.detail === 'string' ? error.detail : `Request failed (${response.status}).`)
     }
     return await response.json() as T
   } catch (error) {

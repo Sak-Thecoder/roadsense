@@ -2,7 +2,7 @@ import {useEffect, useRef, useState} from 'react'
 import {Layers3} from 'lucide-react'
 import {PhotoPicker} from '../components/PhotoPicker'
 import {Empty, ErrorNotice, Loading, PageHeading, QualityTag, percent, Scores} from '../components/UI'
-import {api} from '../services/api'
+import {api, ApiError} from '../services/api'
 import {useScan} from '../state'
 import {names, type Comparison, type Model} from '../types/api'
 
@@ -10,10 +10,11 @@ export default function Compare() {
   const {models, photo, setActive, active} = useScan()
   const [result, setResult] = useState<Comparison>()
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState<Error | null>(null)
+  const invalidPhoto = error instanceof ApiError && error.status === 422
   const req = useRef<AbortController | null>(null)
   useEffect(() => {
-    setResult(undefined); setError('');setLoading(false)
+    setResult(undefined); setError(null);setLoading(false)
     return () => req.current?.abort()
   }, [photo])
   async function compare() {
@@ -21,9 +22,9 @@ export default function Compare() {
     req.current?.abort()
     const controller = new AbortController()
     req.current = controller
-    setLoading(true);setResult(undefined);setError('')
+    setLoading(true);setResult(undefined);setError(null)
     try {const comparison = await api.compare(photo, controller.signal);if (!controller.signal.aborted) setResult(comparison)}
-    catch (e) {if (!controller.signal.aborted) setError((e as Error).message)}
+    catch (e) {if (!controller.signal.aborted) setError(e as Error)}
     finally {if (!controller.signal.aborted) setLoading(false)}
   }
   const highest = result && result.predictions.length > 1 ? Math.max(...result.predictions.map(p => p.confidence)) : null
@@ -32,9 +33,9 @@ export default function Compare() {
     <div className="analyze-grid">
       <PhotoPicker/>
       <div className="stack">
-        <button className="button primary" onClick={compare} disabled={!photo || loading || !models.some(m => m.available)}><Layers3 size={18}/> Run comparison</button>
+        <button className="button primary" onClick={compare} disabled={!photo || loading || invalidPhoto || !models.some(m => m.available)}><Layers3 size={18}/> Run comparison</button>
         {loading && <Loading>Comparing the available models…</Loading>}
-        {error && <ErrorNotice>{error}</ErrorNotice>}
+        {error && <ErrorNotice>{error.message}</ErrorNotice>}
         {!loading && !result && !error && <Empty icon={Layers3} title="Model comparison">{models.some(m => m.available) ? 'Add a photo to see how the available models classify it.' : 'Connect a trained model to compare classifications.'}</Empty>}
         {result && new Set(result.predictions.map(p => p.prediction)).size > 1 && <p className="notice">The models assigned different road quality classes to this image.</p>}
         {result && (Object.keys(names) as Model[]).map(model => {

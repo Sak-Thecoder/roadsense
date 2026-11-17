@@ -12,6 +12,7 @@ Use Python 3.11 and Node.js 22.12+ or Node.js 24. Install dependencies and start
 python3.11 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r backend/requirements.txt
+python -m backend.app.road_photo
 python -m uvicorn backend.app.main:app --reload
 ```
 
@@ -22,7 +23,7 @@ npm --prefix frontend ci
 npm --prefix frontend run dev
 ```
 
-Open `http://localhost:5173`. FastAPI serves OpenAPI at `http://localhost:8000/docs`. The Vite development proxy forwards `/api` to port 8000. Camera access requires localhost or HTTPS and browser/device permission. Upload accepts JPEG, PNG, and WebP. Raw photos live in browser memory during a scan. Scan history stores prediction metadata in the browser.
+Open `http://localhost:5173`. FastAPI serves OpenAPI at `http://localhost:8000/docs`. The Vite development proxy forwards `/api` to port 8000. Camera access requires localhost or HTTPS and browser/device permission. Upload accepts JPEG, PNG, and WebP. Analyze and Compare require visible road surface near the lower center of the frame. Photos without sufficient road evidence return an invalid-road-photo error and produce no scan history entry. Scan history stores prediction metadata in the browser.
 
 The REST API exposes `GET /health`, `GET /models`, `POST /predict/{model_name}`, `POST /compare`, `GET /benchmark`, and `GET /benchmark/{model_name}`. Use the multipart field `image`. Available model IDs are `mobilenetv2`, `resnet50`, and `efficientnetb0`. The model selector shows the artifacts available to the running API. The local Cambodian pilot is identified in the scan and benchmark views.
 
