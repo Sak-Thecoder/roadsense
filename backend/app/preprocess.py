@@ -8,6 +8,9 @@ MODELS = ("mobilenetv2", "resnet50", "efficientnetb0")
 CLASSES = ("Good", "Moderate", "Poor")
 INPUT_SIZE = (224, 224)
 PREPROCESSING = "rgb-exif-bilinear224-keras-v1"
+# Bottom-centre road region cropped from the decoded full-resolution image before resizing.
+FOCAL_PREPROCESSING = "rgb-exif-focalcrop-bilinear224-keras-v1"
+PREPROCESSING_MODES = (PREPROCESSING, FOCAL_PREPROCESSING)
 FORMATS = {"JPEG", "PNG", "WEBP"}
 
 
@@ -15,12 +18,26 @@ class InvalidImage(ValueError):
     """Invalid or unsupported image input."""
 
 
-def decode(data: bytes, max_pixels: int = 24_000_000) -> np.ndarray:
-    return image_pixels(decode_image(data, max_pixels))
+def decode(data: bytes, max_pixels: int = 24_000_000, focal: bool = False) -> np.ndarray:
+    return image_pixels(decode_image(data, max_pixels), focal=focal)
 
 
-def image_pixels(image: Image.Image, size=INPUT_SIZE) -> np.ndarray:
+def focal_region(image: Image.Image) -> Image.Image:
+    """Central half of the width and lower half of the height, where the road surface usually is."""
+    width, height = image.size
+    return image.crop((round(width * 0.25), round(height * 0.5), round(width * 0.75), height))
+
+
+def image_pixels(image: Image.Image, size=INPUT_SIZE, focal: bool = False) -> np.ndarray:
+    if focal:
+        image = focal_region(image)
     return np.asarray(image.resize(size, Image.Resampling.BILINEAR), dtype=np.float32)
+
+
+def uses_focal_crop(preprocessing: str) -> bool:
+    if preprocessing not in PREPROCESSING_MODES:
+        raise ValueError(f"Unknown preprocessing {preprocessing!r}")
+    return preprocessing == FOCAL_PREPROCESSING
 
 
 def decode_image(data: bytes, max_pixels: int = 24_000_000) -> Image.Image:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 
-from backend.app.preprocess import CLASSES, MODELS, preprocess
+from backend.app.preprocess import CLASSES, MODELS, preprocess, uses_focal_crop
 from backend.app.registry import Registry, file_hash
 from backend.app.schemas import Benchmark
 from training.preprocess import PILOT_SCOPE, dataset, load_pixels, partition_rows
@@ -18,15 +18,16 @@ def evaluate(model, name, rows, metadata, artifact, manifest, split, warmups, re
     import tensorflow as tf
     from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 
+    focal = uses_focal_crop(metadata["preprocessing"])
     actual, predicted = [], []
-    for pixels, labels in dataset(rows, name, 32):
+    for pixels, labels in dataset(rows, name, 32, focal=focal):
         outputs = np.asarray(model(pixels, training=False))
         actual.extend(labels.numpy().tolist())
         predicted.extend(outputs.argmax(axis=1).tolist())
 
     precision, recall, f1, support = precision_recall_fscore_support(
         actual, predicted, labels=range(len(CLASSES)), zero_division=0)
-    samples = [load_pixels(rows[i % len(rows)]) for i in range(min(16, len(rows)))]
+    samples = [load_pixels(rows[i % len(rows)], focal=focal) for i in range(min(16, len(rows)))]
     timings = []
     for i in range(warmups + repeats):
         before = time.perf_counter()

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
-from .preprocess import CLASSES, MODELS, InvalidImage, decode_image, image_pixels
+from .preprocess import CLASSES, MODELS, InvalidImage, decode_image
 from .registry import Registry, Unavailable
 from .road_photo import RoadPhotoCheckUnavailable, RoadPhotoValidator, model_path
 from .schemas import Benchmark, Comparison, ModelInfo, Prediction
@@ -68,10 +68,11 @@ def create_app(registry=None, max_upload=None, photo_validator=None):
         if name not in MODELS:
             raise HTTPException(404, "Unknown model.")
 
-    def validated_pixels(data):
+    def validated_image(data):
+        # Each model resizes (and optionally crops) the full-resolution image itself.
         image = decode_image(data, max_pixels)
         photo_validator(image)
-        return image_pixels(image)
+        return image
 
     async def pixels_from(image):
         try:
@@ -81,7 +82,7 @@ def create_app(registry=None, max_upload=None, photo_validator=None):
         if len(data) > max_upload:
             raise HTTPException(413, "Image upload is too large.")
         try:
-            return await run_in_threadpool(validated_pixels, data)
+            return await run_in_threadpool(validated_image, data)
         except InvalidImage as exc:
             raise HTTPException(422, str(exc)) from exc
         except RoadPhotoCheckUnavailable as exc:

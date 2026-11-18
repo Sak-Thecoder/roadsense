@@ -5,12 +5,15 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-from backend.app.preprocess import CLASSES, INPUT_SIZE, MODELS, PREPROCESSING
+from backend.app.preprocess import CLASSES, FOCAL_PREPROCESSING, INPUT_SIZE, MODELS, PREPROCESSING
 from backend.app.registry import file_hash
 from training.preprocess import PILOT_SCOPE, dataset, partition_rows
 
 
-def build_model(model_name, dropout, weights="imagenet", head_units=0, focal_crop=False):
+MONITORS = {"val_accuracy": "max", "val_macro_f1": "max", "val_loss": "min"}
+
+
+def build_model(model_name, dropout, weights="imagenet", head_units=0):
     import tensorflow as tf
 
     constructors = dict(zip(MODELS, (tf.keras.applications.MobileNetV2,
@@ -19,16 +22,38 @@ def build_model(model_name, dropout, weights="imagenet", head_units=0, focal_cro
     backbone = constructors[model_name](weights=weights, include_top=False, input_shape=(*INPUT_SIZE, 3))
     backbone.trainable = False
     inputs = tf.keras.Input((*INPUT_SIZE, 3))
-    pixels = inputs
-    if focal_crop:
-        height, width = INPUT_SIZE
-        pixels = tf.keras.layers.Cropping2D(((height // 2, 0), (width // 4, width // 4)))(pixels)
-        pixels = tf.keras.layers.Resizing(height, width)(pixels)
-    features = backbone(pixels, training=False)
+    # Any focal crop is applied to the full-resolution image during decoding, not here.
+    features = backbone(inputs, training=False)
     pooled = tf.keras.layers.GlobalAveragePooling2D(name="road_features")(features)
     hidden = tf.keras.layers.Dense(head_units, activation="relu")(pooled) if head_units else pooled
     outputs = tf.keras.layers.Dense(len(CLASSES), activation="softmax")(tf.keras.layers.Dropout(dropout)(hidden))
     return tf.keras.Model(inputs, outputs), backbone
+
+
+def balanced_class_weights(rows):
+    counts = Counter(row["verified_quality_label"] for row in rows)
+    return {index: len(rows) / (len(CLASSES) * counts[label]) for index, label in enumerate(CLASSES)}
+
+
+def macro_f1_callback(validation):
+    """Add val_macro_f1 to the epoch logs; list it before callbacks that monitor it."""
+    import numpy as np
+    import tensorflow as tf
+    from sklearn.metrics import f1_score
+
+    class MacroF1(tf.keras.callbacks.Callback):
+        def on_epoch_end(self, epoch, logs=None):
+            actual, predicted = [], []
+            for inputs, labels in validation:
+                predicted.append(np.asarray(self.model(inputs, training=False)).argmax(axis=1))
+                actual.append(np.asarray(labels))
+            score = f1_score(np.concatenate(actual), np.concatenate(predicted),
+                             labels=range(len(CLASSES)), average="macro", zero_division=0)
+            if logs is not None:
+                logs["val_macro_f1"] = float(score)
+            print(f" - val_macro_f1: {score:.4f}", flush=True)
+
+    return MacroF1()
 
 
 def cache_head_features(model, train, validation, passes, batch_size, seed):
@@ -77,20 +102,27 @@ def main():
 
     config = json.loads(args.config.read_text())
     monitor = config.get("selection_metric", "val_loss")
-    if monitor not in {"val_accuracy", "val_loss"}:
-        parser.error("selection_metric must be val_accuracy or val_loss.")
-    mode = "max" if monitor == "val_accuracy" else "min"
+    if monitor not in MONITORS:
+        parser.error(f"selection_metric must be one of {', '.join(MONITORS)}.")
+    mode = MONITORS[monitor]
+    focal = bool(config.get("focal_crop", False))
+    augmentation = config.get("augmentation", "basic")
+    class_weight = config.get("class_weight")
+    if class_weight not in {None, "balanced"}:
+        parser.error("class_weight must be null or balanced.")
     better = max if mode == "max" else min
     seed = config["seed"]
     tf.keras.utils.set_random_seed(seed)
     tf.config.experimental.enable_op_determinism()
     cache_decoded = args.capture_date_pilot or config.get("cache_decoded", False)
     train = dataset(partitions["train"], args.model, config["batch_size"], training=True, seed=seed,
-                    cache_decoded=cache_decoded)
+                    cache_decoded=cache_decoded, focal=focal, augmentation=augmentation)
     validation = None if args.capture_date_pilot else dataset(
-        partitions["validation"], args.model, config["batch_size"], cache_decoded=cache_decoded)
-    model, backbone = build_model(args.model, config["dropout"], head_units=config.get("head_units", 0),
-                                  focal_crop=config.get("focal_crop", False))
+        partitions["validation"], args.model, config["batch_size"], cache_decoded=cache_decoded, focal=focal)
+    weights_by_class = balanced_class_weights(partitions["train"]) if class_weight else None
+    if weights_by_class:
+        print(f"Class weights: { {CLASSES[i]: round(w, 3) for i, w in weights_by_class.items()} }", flush=True)
+    model, backbone = build_model(args.model, config["dropout"], head_units=config.get("head_units", 0))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.output_dir) as temporary:
         directory = Path(temporary)
@@ -99,23 +131,24 @@ def main():
             network.compile(optimizer=tf.keras.optimizers.Adam(learning_rate),
                             loss="sparse_categorical_crossentropy", metrics=["accuracy"])
             checkpoint = directory / f"{phase}.weights.h5"
-            history = network.fit(inputs, validation_data=validation_data, epochs=epochs, shuffle=False, callbacks=[
+            history = network.fit(inputs, validation_data=validation_data, epochs=epochs, shuffle=False,
+                                  class_weight=weights_by_class, callbacks=[
+                macro_f1_callback(validation_data),
                 tf.keras.callbacks.ModelCheckpoint(
                     checkpoint, monitor=monitor, mode=mode, save_best_only=True, save_weights_only=True),
                 tf.keras.callbacks.EarlyStopping(monitor=monitor, mode=mode, patience=config["patience"]),
-                tf.keras.callbacks.ReduceLROnPlateau(patience=max(1, config["patience"] // 2)),
+                tf.keras.callbacks.ReduceLROnPlateau(monitor=monitor, mode=mode,
+                                                     patience=max(1, config["patience"] // 2)),
             ]).history
             epoch = better(range(len(history[monitor])), key=history[monitor].__getitem__)
             network.load_weights(checkpoint)
             selected = dict(phase=phase, epoch=epoch + 1, metric=monitor,
-                            val_accuracy=history["val_accuracy"][epoch], val_loss=history["val_loss"][epoch])
+                            **{key: history[key][epoch] for key in MONITORS})
             return selected, checkpoint, history
 
         if args.capture_date_pilot:
             # A fixed schedule keeps the only held-out capture date out of model selection.
-            counts = Counter(row["verified_quality_label"] for row in partitions["train"])
-            weights_by_class = {index: len(partitions["train"]) / (len(CLASSES) * counts[label])
-                                for index, label in enumerate(CLASSES)}
+            weights_by_class = balanced_class_weights(partitions["train"])
             model.compile(optimizer=tf.keras.optimizers.Adam(config["head_lr"]),
                           loss="sparse_categorical_crossentropy", metrics=["accuracy"])
             history = model.fit(train, epochs=config["head_epochs"], shuffle=False,
@@ -145,7 +178,8 @@ def main():
         model.save(staged)
         digest = file_hash(staged)
         metadata = dict(model=args.model, version=digest[:12], sha256=digest, classes=list(CLASSES),
-                        input_size=list(INPUT_SIZE), preprocessing=PREPROCESSING, config=config,
+                        input_size=list(INPUT_SIZE), preprocessing=FOCAL_PREPROCESSING if focal else PREPROCESSING,
+                        config=config,
                         training_manifest_sha256=file_hash(args.manifest), history=histories,
                         training_examples=len(partitions["train"]),
                         partition_sources={split: dict(Counter(r.get("source") or "unspecified" for r in rows))

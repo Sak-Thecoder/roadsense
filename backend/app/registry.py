@@ -8,9 +8,10 @@ from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 from pydantic import ValidationError
 
-from .preprocess import CLASSES, INPUT_SIZE, MODELS, PREPROCESSING, preprocess
+from .preprocess import CLASSES, INPUT_SIZE, MODELS, PREPROCESSING_MODES, image_pixels, preprocess, uses_focal_crop
 from .schemas import Benchmark, ModelInfo, Prediction
 
 NAMES = dict(zip(MODELS, ("MobileNetV2", "ResNet50", "EfficientNetB0")))
@@ -47,7 +48,7 @@ class Registry:
                 or metadata["model"] != name
                 or metadata["classes"] != list(CLASSES)
                 or metadata["input_size"] != list(INPUT_SIZE)
-                or metadata["preprocessing"] != PREPROCESSING
+                or metadata["preprocessing"] not in PREPROCESSING_MODES
                 or not isinstance(metadata["version"], str)
                 or metadata["sha256"] != self.digest(model)
             ):
@@ -78,10 +79,18 @@ class Registry:
                          version=metadata["version"] if metadata else None,
                          use_scope=metadata.get("use_scope") if metadata else None)
 
-    def predict(self, name, pixels):
+    def predict(self, name, image):
+        """Classify a decoded PIL image (or, for full-frame models, pre-resized pixels)."""
         metadata = self.metadata(name)
         if not metadata or self.failed.get(name) == metadata["sha256"]:
             raise Unavailable(f"{NAMES[name]} is unavailable. A compatible trained artifact is required.")
+        focal = uses_focal_crop(metadata["preprocessing"])
+        if isinstance(image, Image.Image):
+            pixels = image_pixels(image, focal=focal)
+        elif focal:
+            raise ValueError("Focal-crop models need the decoded full-resolution image.")
+        else:
+            pixels = image
         with self.lock:
             entry = self.cache.pop(name, None)
             if not entry or entry[0] != metadata["sha256"]:

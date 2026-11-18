@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 from PIL import Image
 
 from backend.app.main import create_app
-from backend.app.preprocess import CLASSES, INPUT_SIZE, PREPROCESSING, decode, preprocess
+from backend.app.preprocess import CLASSES, FOCAL_PREPROCESSING, INPUT_SIZE, PREPROCESSING, decode, preprocess
 from backend.app.registry import Registry, file_hash
 from backend.app.road_photo import RoadPhotoValidator, road_coverage
 from backend.tests.fixture_server import check_fixture_photo, fixtures
@@ -123,3 +123,39 @@ def test_corrupt_model_is_rejected(tmp_path):
     client = TestClient(create_app(registry, photo_validator=check_fixture_photo))
     assert client.post("/predict/mobilenetv2", files=upload(jpeg())).status_code == 503
     assert not registry.info("mobilenetv2").available
+
+
+def test_focal_crop_uses_full_resolution_lower_centre():
+    image = Image.new("RGB", (400, 800), (0, 0, 0))
+    image.paste((255, 255, 255), (100, 400, 300, 800))  # exactly the focal region
+    image.paste((0, 255, 0), (100, 400, 102, 800))  # 2px line: 0.5% of full width, 1% of the crop
+    stream = BytesIO()
+    image.save(stream, "PNG")
+    focal = decode(stream.getvalue(), focal=True)
+    full = decode(stream.getvalue())
+    assert focal.shape == (*INPUT_SIZE, 3)
+    assert focal[:, 10:].min() > 250  # only the road region remains
+    assert full[:100].max() < 5  # full frame still contains the upper background
+    assert focal[:, 1, 1].mean() > focal[:, 1, 0].mean() + 100  # the thin line survives the crop
+
+
+def test_registry_applies_focal_crop_per_model(tmp_path):
+    import tensorflow as tf
+
+    inputs = tf.keras.Input((*INPUT_SIZE, 3))
+    head = tf.keras.layers.Dense(3, activation="softmax")
+    model = tf.keras.Model(inputs, head(tf.keras.layers.GlobalAveragePooling2D()(inputs)))
+    head.set_weights([np.eye(3, dtype=np.float32), np.zeros(3, dtype=np.float32)])
+    path = tmp_path / "mobilenetv2.keras"
+    model.save(path)
+    path.with_suffix(".json").write_text(json.dumps(dict(
+        model="mobilenetv2", version="focal", sha256=file_hash(path), classes=list(CLASSES),
+        input_size=list(INPUT_SIZE), preprocessing=FOCAL_PREPROCESSING)))
+    registry = Registry(tmp_path, tmp_path)
+    assert registry.info("mobilenetv2").available
+    image = Image.new("RGB", (400, 800), (0, 0, 255))
+    image.paste((255, 0, 0), (100, 400, 300, 800))
+    # A full-frame resize would be mostly blue (Poor); the focal crop is all red (Good).
+    assert registry.predict("mobilenetv2", image).prediction == "Good"
+    with pytest.raises(ValueError, match="full-resolution"):
+        registry.predict("mobilenetv2", np.zeros((*INPUT_SIZE, 3), np.float32))

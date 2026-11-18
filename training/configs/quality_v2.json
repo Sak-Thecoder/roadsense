@@ -1,0 +1,18 @@
+{
+  "batch_size": 32,
+  "head_epochs": 24,
+  "fine_tune_epochs": 15,
+  "fine_tune_layers": 40,
+  "dropout": 0.25,
+  "head_lr": 0.0007,
+  "fine_tune_lr": 0.00003,
+  "seed": 42,
+  "patience": 4,
+  "selection_metric": "val_macro_f1",
+  "head_units": 128,
+  "feature_passes": 2,
+  "focal_crop": true,
+  "augmentation": "strong",
+  "class_weight": "balanced",
+  "cache_decoded": true
+}

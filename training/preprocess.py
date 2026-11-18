@@ -71,7 +71,7 @@ def validate_partitions(rows, pilot=False):
     return result
 
 
-def load_pixels(row):
+def load_pixels(row, focal=False):
     path = Path(row["image_path"])
     if row.get("archive_member"):
         with ZipFile(path) as archive:
@@ -80,15 +80,32 @@ def load_pixels(row):
         content = path.read_bytes()
     if hashlib.sha256(content).hexdigest() != row["sha256"].lower():
         raise ValueError(f"Image bytes differ from the manifest: {row['image_id']}")
-    return decode(content)
+    return decode(content, focal=focal)
 
 
-def dataset(rows, model, batch_size, training=False, seed=42, cache_decoded=False):
+def augmentation_layers(kind, seed):
+    import tensorflow as tf
+
+    layers = [tf.keras.layers.RandomFlip("horizontal", seed=seed),
+              tf.keras.layers.RandomRotation(0.03, seed=seed + 1)]
+    if kind == "strong":
+        # Photometric jitter for lighting/camera differences, and mild zoom/shift for framing.
+        layers += [tf.keras.layers.RandomZoom((-0.15, 0.0), seed=seed + 2),
+                   tf.keras.layers.RandomTranslation(0.05, 0.05, seed=seed + 3),
+                   tf.keras.layers.RandomBrightness(0.15, value_range=(0, 255), seed=seed + 4),
+                   tf.keras.layers.RandomContrast(0.2, seed=seed + 5)]
+    elif kind != "basic":
+        raise ValueError(f"Unknown augmentation {kind!r}")
+    return tf.keras.Sequential(layers)
+
+
+def dataset(rows, model, batch_size, training=False, seed=42, cache_decoded=False, focal=False,
+            augmentation="basic"):
     import tensorflow as tf
 
     def examples():
         for row in rows:
-            yield load_pixels(row).astype(np.uint8), np.int32(CLASSES.index(row["verified_quality_label"]))
+            yield load_pixels(row, focal=focal).astype(np.uint8), np.int32(CLASSES.index(row["verified_quality_label"]))
 
     data = tf.data.Dataset.from_generator(examples, output_signature=(
         tf.TensorSpec((*INPUT_SIZE, 3), tf.uint8), tf.TensorSpec((), tf.int32)))
@@ -99,11 +116,9 @@ def dataset(rows, model, batch_size, training=False, seed=42, cache_decoded=Fals
         data = data.shuffle(min(256, len(rows)), seed=seed)
     data = data.batch(batch_size)
     if training:
-        augment = tf.keras.Sequential([
-            tf.keras.layers.RandomFlip("horizontal", seed=seed),
-            tf.keras.layers.RandomRotation(0.03, seed=seed + 1),
-        ])
-        data = data.map(lambda pixels, labels: (augment(pixels, training=True), labels))
+        augment = augmentation_layers(augmentation, seed)
+        data = data.map(lambda pixels, labels: (
+            tf.clip_by_value(augment(tf.cast(pixels, tf.float32), training=True), 0, 255), labels))
 
     def transform(pixels, labels):
         converted = tf.numpy_function(lambda values: preprocess(values, model), [pixels], tf.float32)

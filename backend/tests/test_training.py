@@ -52,7 +52,7 @@ def test_transfer_head_forward_and_optimizer_step(name):
     import tensorflow as tf
 
     tf.keras.backend.clear_session()
-    model, backbone = build_model(name, dropout=0.25, weights=None, head_units=8, focal_crop=True)
+    model, backbone = build_model(name, dropout=0.25, weights=None, head_units=8)
     assert not backbone.trainable
     model.compile(optimizer="adam", loss="sparse_categorical_crossentropy")
     pixels = np.zeros((1, 224, 224, 3), dtype=np.float32)
@@ -60,8 +60,10 @@ def test_transfer_head_forward_and_optimizer_step(name):
     assert model(pixels, training=False).shape == (1, 3)
 
 
-@pytest.mark.parametrize("selection_metric,feature_passes", [("val_accuracy", 2), ("val_loss", 0)])
-def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypatch, selection_metric, feature_passes):
+@pytest.mark.parametrize("selection_metric,feature_passes,improved", [
+    ("val_accuracy", 2, False), ("val_loss", 0, False), ("val_macro_f1", 2, True), ("val_macro_f1", 0, True)])
+def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypatch, selection_metric, feature_passes,
+                                                             improved):
     import csv
     import json
     import sys
@@ -101,7 +103,8 @@ def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypat
     config = tmp_path / "config.json"
     config.write_text(json.dumps(dict(head_epochs=1, fine_tune_epochs=1, fine_tune_layers=1,
         dropout=0.25, head_lr=0.001, fine_tune_lr=0.00001, seed=42, patience=2, batch_size=3,
-        selection_metric=selection_metric, feature_passes=feature_passes, cache_decoded=bool(feature_passes))))
+        selection_metric=selection_metric, feature_passes=feature_passes, cache_decoded=bool(feature_passes),
+        **(dict(focal_crop=True, augmentation="strong", class_weight="balanced") if improved else {}))))
     models, results = tmp_path / "models", tmp_path / "results"
     monkeypatch.setattr(train, "build_model", tiny_classifier)
     monkeypatch.setattr(sys, "argv", ["train", "--manifest", str(manifest), "--model", "mobilenetv2",
@@ -112,9 +115,13 @@ def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypat
                                       "--warmups", "1", "--repeats", "2"])
     evaluate.main()
     registry = Registry(models, results)
-    selection = registry.metadata("mobilenetv2")["validation_selection"]
+    metadata = registry.metadata("mobilenetv2")
+    selection = metadata["validation_selection"]
     assert selection["metric"] == selection_metric
-    assert 0 <= selection["val_accuracy"] <= 1
+    assert 0 <= selection["val_accuracy"] <= 1 and 0 <= selection["val_macro_f1"] <= 1
+    assert "val_macro_f1" in metadata["history"]["head"]
+    from backend.app.preprocess import FOCAL_PREPROCESSING, PREPROCESSING
+    assert metadata["preprocessing"] == (FOCAL_PREPROCESSING if improved else PREPROCESSING)
     metrics = registry.benchmark("mobilenetv2")
     assert metrics is not None and metrics.dataset_size == 3
     assert (results / "mobilenetv2_confusion.png").is_file()
