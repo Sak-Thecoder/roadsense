@@ -4,13 +4,18 @@ import type {LucideIcon} from 'lucide-react'
 import type {ReactNode} from 'react'
 import {classes, names, type Prediction, type Quality} from '../types/api'
 
+// Small reusable UI pieces shared by several pages.
+
+/** 0.834 -> "83%" */
 export const percent = (value: number) => `${Math.round(value * 100)}%`
 const symbols: Record<Quality, LucideIcon> = {Good:Check, Moderate:TriangleAlert, Poor:X}
 
+/** Coloured label with an icon for Good / Moderate / Poor. */
 export function QualityTag({quality}: {quality: Quality}) {
   const Icon = symbols[quality]
   return <span className={`quality ${quality.toLowerCase()}`}><Icon size={15} aria-hidden/>{quality}</span>
 }
+/** Probability bar for each class; bar width = the probability as a percentage. */
 export function Scores({prediction}: {prediction: Prediction}) {
   return <section className="card"><h2>Class scores</h2>
     <div className="score-list">{classes.map(label => <div key={label}>
@@ -19,6 +24,7 @@ export function Scores({prediction}: {prediction: Prediction}) {
     </div>)}</div>
   </section>
 }
+/** Big result banner: predicted class, model name, inference time and confidence. */
 export function Outcome({prediction}: {prediction: Prediction}) {
   return <section className={`outcome ${prediction.prediction.toLowerCase()}`}>
     <div><QualityTag quality={prediction.prediction}/><h2>{prediction.prediction} road quality</h2>

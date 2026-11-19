@@ -6,13 +6,17 @@ import {api, ApiError} from '../services/api'
 import {useScan} from '../state'
 import {names, type Comparison, type Model} from '../types/api'
 
+/** Compare page: run one photo through all three models side by side. */
 export default function Compare() {
   const {models, photo, setActive, active} = useScan()
   const [result, setResult] = useState<Comparison>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
+  // 422 = the server rejected the photo (no visible road), so retrying the same photo is pointless.
   const invalidPhoto = error instanceof ApiError && error.status === 422
+  // The request in progress, so it can be cancelled if a new comparison starts.
   const req = useRef<AbortController | null>(null)
+  // A new photo clears old results and cancels any running request.
   useEffect(() => {
     setResult(undefined); setError(null);setLoading(false)
     return () => req.current?.abort()
@@ -27,6 +31,7 @@ export default function Compare() {
     catch (e) {if (!controller.signal.aborted) setError(e as Error)}
     finally {if (!controller.signal.aborted) setLoading(false)}
   }
+  // Highest confidence among the models (only meaningful with 2+ predictions).
   const highest = result && result.predictions.length > 1 ? Math.max(...result.predictions.map(p => p.confidence)) : null
   return <>
     <PageHeading title="Compare models">Run the same photo through each available RoadSense model.</PageHeading>

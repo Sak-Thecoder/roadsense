@@ -1,3 +1,5 @@
+// TypeScript versions of the backend's Pydantic response models (backend/app/schemas.py).
+// `as const` keeps the exact strings, so Quality = 'Good' | 'Moderate' | 'Poor'.
 export const classes = ['Good', 'Moderate', 'Poor'] as const
 export type Quality = typeof classes[number]
 export type Model = 'mobilenetv2' | 'resnet50' | 'efficientnetb0'

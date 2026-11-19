@@ -26,12 +26,14 @@ def main():
         parser.error("The test partition is reserved for the final evaluation; pass --allow-test explicitly.")
     import tensorflow as tf
 
+    # ---- For each model, save its feature vectors and probabilities for the chosen splits ----
     partitions = partition_rows(args.manifest)
     args.out.mkdir(parents=True, exist_ok=True)
     for name in args.models:
         metadata = json.loads((args.model_dir / f"{name}.json").read_text())
         focal = uses_focal_crop(metadata["preprocessing"])
         model = tf.keras.models.load_model(args.model_dir / f"{name}.keras", compile=False)
+        # A model with two outputs: the pooled "road_features" vector and the final probabilities.
         both = tf.keras.Model(model.inputs, [model.get_layer("road_features").output, model.output])
         for split in args.splits:
             rows = partitions[split]
@@ -40,6 +42,7 @@ def main():
                 pooled, scores = both(pixels, training=False)
                 features.append(np.asarray(pooled))
                 probabilities.append(np.asarray(scores))
+            # .npz = compressed NumPy archive; image_ids keep rows in a known order, sha256 ties it to the model.
             np.savez_compressed(args.out / f"{name}-{split}.npz", features=np.concatenate(features),
                                 probabilities=np.concatenate(probabilities),
                                 image_ids=np.array([r["image_id"] for r in rows]), model_sha256=metadata["sha256"])

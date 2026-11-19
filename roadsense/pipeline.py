@@ -1,4 +1,11 @@
-"""Sample-first image indexing, auditing and leakage-aware splitting."""
+"""Sample-first image indexing, auditing and leakage-aware splitting.
+
+Sub-commands:
+  index    - list images in a folder with hashes and damage annotations (first 100 by default)
+  combine  - merge several index CSVs into one
+  audit    - report exact and near-duplicate images
+  split    - assign train/validation/test/cambodia_holdout without splitting groups or duplicates
+"""
 import argparse
 import csv
 import hashlib
@@ -30,6 +37,7 @@ def write_csv(path, rows, fields=FIELDS):
 
 
 def damage_types(xml_path):
+    """Sorted list of damage class names in a Pascal VOC XML annotation (empty if no file)."""
     if not xml_path.exists():
         return []
     root = ET.parse(xml_path).getroot()
@@ -38,10 +46,14 @@ def damage_types(xml_path):
 
 
 def fingerprints(path):
+    """Return (sha256, dhash). SHA-256 detects identical files; dHash detects look-alike images."""
     digest = hashlib.sha256()
     with open(path, 'rb') as f:
         for block in iter(lambda: f.read(1024 * 1024), b''):
             digest.update(block)
+    # Difference hash (dHash), a 64-bit "perceptual" fingerprint: shrink the image to 9x8 grey
+    # pixels and, for each row, record 1 if a pixel is brighter than its right neighbour.
+    # Visually similar photos get hashes that differ in only a few bits, even after resizing.
     with Image.open(path) as im:
         im = ImageOps.exif_transpose(im).convert('L').resize((9, 8))
         pixels = list(im.getdata())
@@ -53,6 +65,7 @@ def fingerprints(path):
 
 
 def index(args):
+    """The `index` command: build an index CSV of images, optionally merged with a metadata manifest."""
     root = Path(args.root).resolve()
     if not root.is_dir():
         raise ValueError('Source root must be an existing directory')
@@ -86,6 +99,7 @@ def index(args):
         label = meta.get('quality_label', '').strip()
         if label and label not in LABELS:
             raise ValueError(f'Invalid quality label for {rel}: {label}')
+        # image_id is derived from source + relative path, so it stays the same on every run.
         rows.append(dict(image_id=hashlib.sha256((args.source + '\0' + rel).encode()).hexdigest()[:20],
                          original_path=str(path), source=args.source, damage_types='|'.join(damage),
                          group_id=meta.get('group_id', '').strip(), country=meta.get('country', '').strip(),
@@ -99,6 +113,8 @@ def index(args):
 
 
 def audit_rows(rows, threshold):
+    """Compare every pair of images: identical SHA-256 = exact duplicate; dHash within
+    `threshold` differing bits = near duplicate."""
     exact, near = [], []
     # Pairwise comparison is intentionally transparent; use a smaller sample first.
     for i, a in enumerate(rows):
@@ -121,6 +137,7 @@ def audit(args):
 
 
 def split_rows(rows, seed, holdout_fraction, threshold):
+    """Group related images, set aside a Cambodian holdout, then fill train/validation/test 70/15/15."""
     if not 0 < holdout_fraction < 1:
         raise ValueError('Holdout fraction must be between 0 and 1')
     ids = [r['image_id'] for r in rows]
@@ -165,13 +182,16 @@ def split_rows(rows, seed, holdout_fraction, threshold):
         raise ValueError('Need at least two independent Cambodian groups with usable labels for a holdout')
     target = max(1, round(sum(len(g) for g in candidates) * holdout_fraction))
     chosen, count = [], 0
+    # `[:-1]` always leaves at least one Cambodian group out of the holdout.
     for g in candidates[:-1]:
         if count >= target:
             break
         chosen.append(g)
         count += len(g)
+    # id(g) = identity of the list object, used to tell which groups were chosen.
     chosen_ids = {id(g) for g in chosen}
     remaining = [g for g in groups if id(g) not in chosen_ids]
+    # Number of images in a group that have a real grade (Uncertain/unlabelled don't count).
     usable = lambda g: sum(r.get('quality_label') in {'Good', 'Moderate', 'Poor'} for r in g)
     totals = sum(usable(g) for g in remaining)
     targets = {'train': totals * .70, 'validation': totals * .15, 'test': totals * .15}
@@ -179,6 +199,7 @@ def split_rows(rows, seed, holdout_fraction, threshold):
     assignment = {}
     # Largest groups first; deterministic random shuffle breaks equal-size ties.
     for g in sorted(remaining, key=usable, reverse=True):
+        # Choose the split that is furthest below its target, relative to the target size.
         split = max(targets, key=lambda k: (targets[k] - counts[k]) / max(targets[k], 1))
         counts[split] += usable(g)
         for r in g:
@@ -203,6 +224,7 @@ def split(args):
 
 
 def combine(args):
+    """The `combine` command: concatenate index CSVs, refusing duplicate image IDs."""
     rows = [row for path in args.inputs for row in read_csv(path)]
     if len({r['image_id'] for r in rows}) != len(rows):
         raise ValueError('Duplicate image IDs in inputs')
@@ -214,6 +236,7 @@ def combine(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest='command', required=True)
+    # One sub-parser per command; set_defaults(func=...) says which function runs it.
     p = sub.add_parser('index')
     p.add_argument('--root', required=True); p.add_argument('--source', required=True)
     p.add_argument('--annotations', help='XML root mirroring relative image paths; otherwise adjacent XML')

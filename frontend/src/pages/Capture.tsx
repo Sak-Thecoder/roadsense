@@ -5,6 +5,7 @@ import {PageHeading} from '../components/UI'
 import {useScan} from '../state'
 import {names} from '../types/api'
 
+/** Larger camera/upload workspace before analysing a photo. */
 export default function Capture() {
   const {active, photo, status} = useScan()
   const navigate = useNavigate()

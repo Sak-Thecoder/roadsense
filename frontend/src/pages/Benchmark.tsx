@@ -5,6 +5,7 @@ import {Empty, ErrorNotice, Loading, PageHeading, percent} from '../components/U
 import {api} from '../services/api'
 import {names, type Benchmark as Metrics, type Model} from '../types/api'
 
+/** Benchmark page: saved test-set metrics, confusion matrix, accuracy chart, speed and size. */
 export default function Benchmark() {
   const [data, setData] = useState<Metrics[]>()
   const [error, setError] = useState('')
@@ -17,8 +18,11 @@ export default function Benchmark() {
       .catch(e => {if (!controller.signal.aborted) setError(e.message)})
     return () => controller.abort()
   }, [attempt])
+  // The selected model's results (or the first one if it has none).
   const model = data?.find(m => m.model === selected) || data?.[0]
+  // Only compare models evaluated on the same dataset and split, otherwise the numbers aren't comparable.
   const comparable = data?.filter(m => model && m.dataset_sha256 === model.dataset_sha256 && m.split === model.split && m.use_scope === model.use_scope)
+  // Speeds are only comparable when measured on the same hardware with the same method.
   const matchingLatency = comparable?.filter(m => m.hardware === model?.hardware && m.latency_method === model?.latency_method)
   return <>
     <PageHeading title="Benchmark">Road quality performance measured on held-out data.</PageHeading>

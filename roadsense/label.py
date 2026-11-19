@@ -1,4 +1,8 @@
-"""Local desktop labeling UI. Saves each decision to the index CSV."""
+"""Local desktop labeling UI. Saves each decision to the index CSV.
+
+Shows one photo at a time (Tkinter window) with buttons Good / Moderate / Poor /
+Uncertain. Every click is saved immediately, so no work is lost if the window closes.
+"""
 import argparse
 import os
 import tempfile
@@ -19,17 +23,20 @@ def main():
         parser.error('Index is empty')
     root = tk.Tk()
     root.title('RoadSense manual quality review')
+    # Start at the first unlabelled image. A one-item list is used so inner functions can change it.
     index = [next((i for i, r in enumerate(rows) if not r.get('quality_label')), 0)]
     title = tk.Label(root, wraplength=900); title.pack()
     preview = tk.Label(root); preview.pack()
     status = tk.Label(root); status.pack()
     def render():
+        """Show the current image and progress."""
         row = rows[index[0]]
         title.config(text=f"{index[0]+1}/{len(rows)}  {row['original_path']}\nSource: {row['source']}   Damage annotations: {row.get('damage_types') or 'none recorded'}")
         try:
             with Image.open(row['original_path']) as im:
                 im = ImageOps.exif_transpose(im).convert('RGB')
                 im.thumbnail((900, 600))
+                # Keep a reference on the widget, otherwise Python frees the image and it disappears.
                 preview.image = ImageTk.PhotoImage(im)
                 preview.config(image=preview.image, text='')
         except OSError as exc:
@@ -37,6 +44,7 @@ def main():
         done = sum(bool(r.get('quality_label')) for r in rows)
         status.config(text=f"Reviewed: {done}/{len(rows)}   Current: {row.get('quality_label') or 'Unlabeled'}")
     def save(label):
+        """Store the label and save the CSV safely: write a temporary file, then replace the original."""
         old = rows[index[0]].get('quality_label', '')
         rows[index[0]]['quality_label'] = label
         tmp = None
@@ -45,6 +53,7 @@ def main():
                 tmp = f.name
             # Preserve columns added by a user or later pipeline stage.
             write_csv(tmp, rows, list(rows[0].keys()))
+            # os.replace is atomic: the CSV is either fully old or fully new, never half-written.
             os.replace(tmp, path)
         except OSError as exc:
             rows[index[0]]['quality_label'] = old
@@ -54,6 +63,7 @@ def main():
         render()
     buttons = tk.Frame(root); buttons.pack()
     for label in ('Good', 'Moderate', 'Poor', 'Uncertain'):
+        # `label=label` captures the current value; without it every button would use the last label.
         tk.Button(buttons, text=label, command=lambda label=label: save(label)).pack(side='left')
     def move(n):
         index[0] = max(0, min(len(rows)-1, index[0]+n)); render()

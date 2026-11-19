@@ -10,6 +10,12 @@ from training.preprocess import PILOT_SCOPE, candidates, group_keys
 
 
 def pilot_rows(manifest):
+    """Keep the 50 permitted self-collected Cambodian photos and split them by capture date.
+
+    Photos from the first date become "train", photos from the second date "test".
+    Splitting by date (instead of randomly) prevents near-identical shots taken
+    minutes apart from ending up on both sides.
+    """
     with manifest.open(newline="", encoding="utf-8-sig") as file:
         rows = list(csv.DictReader(file))
     by_date = defaultdict(list)
@@ -21,6 +27,7 @@ def pilot_rows(manifest):
             continue
         if row["label_status"] != "reviewed" or row.get("duplicate_group"):
             raise ValueError(f"Review or perceptual match needs attention: {row['image_id']}")
+        # EXIF stores the camera time as "YYYY:MM:DD HH:MM:SS".
         captured_at = datetime.strptime(origin["exif_datetime"], "%Y:%m:%d %H:%M:%S")
         capture_date = captured_at.date().isoformat()
         if not Path(row["archive_member"]).name.startswith(captured_at.strftime("%Y%m%d_")):
@@ -33,6 +40,7 @@ def pilot_rows(manifest):
         raise ValueError("Expected the 50 authorized photos and two documented capture dates.")
     owners = {}
     output = []
+    # Earlier date -> train, later date -> test.
     for split, date in zip(("train", "test"), sorted(by_date)):
         for row in sorted(by_date[date], key=lambda item: item["image_id"]):
             for key in group_keys(row):
@@ -53,6 +61,7 @@ def main():
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
+    # Re-read the written file with the normal checks to make sure it is valid.
     candidates(args.output)
     print(Counter((row["split"], row["verified_quality_label"]) for row in rows))
 

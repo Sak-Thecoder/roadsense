@@ -1,4 +1,8 @@
-"""Reproduce pilot predictions and inspect diagnostic crops and Grad-CAMs."""
+"""Reproduce pilot predictions and inspect diagnostic crops and Grad-CAMs.
+
+Outputs (in --out): predictions.csv, metrics.json, confusion-matrix PNGs,
+Grad-CAM heat maps for some wrong predictions, and error_gallery.html to browse the errors.
+"""
 import argparse
 import csv
 import hashlib
@@ -21,6 +25,7 @@ from backend.app.preprocess import CLASSES, MODELS, INPUT_SIZE, decode, preproce
 from backend.app.registry import Registry, file_hash
 from training.preprocess import partition_rows, load_pixels
 
+# Name of the last convolution layer of each backbone: the layer Grad-CAM explains.
 LAYERS = {
     "mobilenetv2": "out_relu",
     "resnet50": "conv5_block3_out",
@@ -29,6 +34,7 @@ LAYERS = {
 
 
 def original(row):
+    """Open the full-resolution original photo from its ZIP archive (upright, RGB)."""
     with zipfile.ZipFile(row["image_path"]) as archive:
         data = archive.read(row["archive_member"])
     if hashlib.sha256(data).hexdigest() != row["sha256"]:
@@ -38,25 +44,39 @@ def original(row):
 
 
 def crop_pixels(image):
+    """Lower-centre road crop resized to 224x224 (same box as backend.app.preprocess.focal_region)."""
     width, height = image.size
     crop = image.crop((round(width*.25), round(height*.5), round(width*.75), height))
     return np.asarray(crop.resize(INPUT_SIZE, Image.Resampling.BILINEAR), dtype=np.float32)
 
 
 def gradcam(model, name, pixels, class_index):
+    """Grad-CAM heat map: which image regions pushed the model towards `class_index`.
+
+    1. Get the last convolution feature maps and the model's score for the class.
+    2. Take the gradient of that score with respect to each feature map.
+    3. Average each gradient map into one weight per channel (how important the channel is).
+    4. Weighted sum of the feature maps, keep positive values (ReLU), scale to 0..1.
+    Returns (heat_map, class_probabilities).
+    """
+    # The backbone is the only sub-model inside our classifier.
     backbone = next(layer for layer in model.layers if isinstance(layer, tf.keras.Model))
+    # `probe` returns both the last convolution output and the backbone output.
     probe = tf.keras.Model(backbone.input, [backbone.get_layer(LAYERS[name]).output, backbone.output])
     inputs = tf.convert_to_tensor(preprocess(pixels, name)[None])
+    # GradientTape records operations so gradients can be computed afterwards.
     with tf.GradientTape() as tape:
         convolution, features = probe(inputs, training=False)
         tape.watch(convolution)
         output = features
+        # Re-run the classifier head (layers after Input and backbone) by hand, so the tape sees it.
         for layer in model.layers[2:]:
             output = layer(output, training=False)
         score = output[:, class_index]
     gradients = tape.gradient(score, convolution)
     if gradients is None:
         raise RuntimeError(f"No Grad-CAM gradient for {name}")
+    # Average over height and width -> one importance weight per channel.
     weights = tf.reduce_mean(gradients, axis=(1, 2), keepdims=True)
     heat = tf.nn.relu(tf.reduce_sum(weights * convolution, axis=-1))[0].numpy()
     if heat.max() > 0:
@@ -71,6 +91,7 @@ def main():
     args = parser.parse_args()
     if args.out.exists():
         parser.error("Choose a new output directory")
+    # ---- Load the pilot test images and the three trained models ----
     rows = partition_rows(args.manifest, pilot=True)
     test = rows["test"]
     if len(test) != 21:
@@ -86,6 +107,7 @@ def main():
 
     args.out.mkdir(parents=True)
     (args.out / "images").mkdir()
+    # ---- Predict every test photo twice: full frame and lower-centre crop ----
     predictions = []
     for row in test:
         image = original(row)
@@ -109,6 +131,7 @@ def main():
         writer.writeheader()
         writer.writerows(predictions)
 
+    # ---- Metrics and confusion matrices; full-frame results must match the saved benchmark ----
     actual = [CLASSES.index(row["true_label"]) for row in predictions]
     stats = {}
     for name in MODELS:
@@ -129,6 +152,7 @@ def main():
                     raise ValueError(f"Reproduced matrix differs from saved result for {name}")
                 fig, ax = plt.subplots(figsize=(5,4))
                 ax.imshow(matrix, cmap="Blues")
+                # Write the count inside each cell (white text on dark cells).
                 for i in range(3):
                     for j in range(3):
                         ax.text(j, i, str(matrix[i,j]), ha="center", va="center",
@@ -139,6 +163,7 @@ def main():
                 fig.savefig(args.out / f"{name}_confusion.png", dpi=150)
                 plt.close(fig)
 
+    # ---- Grad-CAM for one misclassified photo per true class and model ----
     examples = {}
     for name in MODELS:
         errors = [row for row in predictions if row[f"full_{name}_prediction"] != row["true_label"]]
@@ -155,10 +180,12 @@ def main():
             class_index = CLASSES.index(record[f"full_{name}_prediction"])
             heat, check = gradcam(models[name], name, pixels, class_index)
             expected = np.array([record[f"full_{name}_{label}"] for label in CLASSES])
+            # Safety check: the hand-run head must give the same probabilities as the real model.
             if not np.allclose(check, expected, atol=1e-5):
                 raise ValueError(f"Grad-CAM reconstruction mismatch for {name}")
             fig, ax = plt.subplots(figsize=(5,5))
             ax.imshow(pixels.astype("uint8"))
+            # Overlay the 7x7 heat map stretched over the 224x224 image, 40% transparent.
             ax.imshow(heat, cmap="jet", alpha=.4, extent=(0,224,224,0), interpolation="bilinear")
             ax.set_title(f"{record['image_id']} | true {record['true_label']} | predicted {CLASSES[class_index]}")
             ax.axis("off")
@@ -168,11 +195,13 @@ def main():
     stats["gradcam_examples"] = examples
     (args.out / "metrics.json").write_text(json.dumps(stats, indent=2))
 
+    # ---- Build a simple HTML gallery of photos that at least one model got wrong ----
     cards = []
     for record in predictions:
         errors = [n for n in MODELS if record[f"full_{n}_prediction"] != record["true_label"]]
         if not errors:
             continue
+        # html.escape prevents special characters from breaking the HTML.
         details = "".join(f"<li>{html.escape(n)}: {record[f'full_{n}_prediction']} "
                           f"({record[f'full_{n}_confidence']:.1%})</li>" for n in MODELS)
         overlays = "".join(f'<a href="images/{n}_{record["image_id"]}_gradcam.png">{n} Grad-CAM</a> '

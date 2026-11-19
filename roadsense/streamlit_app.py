@@ -1,4 +1,9 @@
-"""Human review of a pilot CSV; decisions are stored separately from metadata."""
+"""Human review of a pilot CSV; decisions are stored separately from metadata.
+
+Run with:  streamlit run roadsense/streamlit_app.py
+Streamlit re-runs this whole script from top to bottom on every button click;
+`st.session_state` keeps values (like the current image index) between runs.
+"""
 import csv
 import os
 import tempfile
@@ -22,6 +27,7 @@ valid={'Good','Moderate','Poor','Uncertain','Reject'}
 counts={v:sum(x==v for x in labels.values()) for v in valid}
 st.sidebar.write(f"Reviewed: {sum(r['image_id'] in labels for r in rows)} / {len(rows)}")
 st.sidebar.write(counts)
+# On first load, start at the first image that has not been reviewed yet.
 if 'idx' not in st.session_state: st.session_state.idx=next((i for i,r in enumerate(rows) if r['image_id'] not in labels),0)
 st.session_state.idx=min(st.session_state.idx,len(rows)-1)
 a,b,c=st.columns([1,1,4])
@@ -39,6 +45,7 @@ for col,label in zip(cols,('Good','Moderate','Poor','Uncertain','Reject')):
     if col.button(label, key=label, use_container_width=True):
         labels[row['image_id']]=label
         labels_path.parent.mkdir(parents=True,exist_ok=True)
+        # Save safely: write a temporary file, then atomically replace the labels CSV.
         fd,tmp=tempfile.mkstemp(dir=labels_path.parent,suffix='.csv')
         try:
             with os.fdopen(fd,'w',newline='',encoding='utf-8') as f:
@@ -47,4 +54,5 @@ for col,label in zip(cols,('Good','Moderate','Poor','Uncertain','Reject')):
             os.replace(tmp,labels_path)
         finally:
             if os.path.exists(tmp): os.unlink(tmp)
+        # Move to the next image and redraw the page.
         st.session_state.idx=min(st.session_state.idx+1,len(rows)-1); st.rerun()

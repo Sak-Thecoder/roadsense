@@ -15,25 +15,34 @@ from training.preprocess import PILOT_SCOPE, dataset, load_pixels, partition_row
 
 
 def evaluate(model, name, rows, metadata, artifact, manifest, split, warmups, repeats):
+    """Score `model` on `rows` and measure its speed; returns a Benchmark (saved as JSON for the API)."""
     import tensorflow as tf
     from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 
+    # Use the same crop the model was trained with (read from its metadata).
     focal = uses_focal_crop(metadata["preprocessing"])
     actual, predicted = [], []
+    # Predict the whole split in batches of 32; the predicted class is the highest probability.
     for pixels, labels in dataset(rows, name, 32, focal=focal):
         outputs = np.asarray(model(pixels, training=False))
         actual.extend(labels.numpy().tolist())
         predicted.extend(outputs.argmax(axis=1).tolist())
 
+    # Per-class precision, recall, F1 and support (number of true images of each class).
     precision, recall, f1, support = precision_recall_fscore_support(
         actual, predicted, labels=range(len(CLASSES)), zero_division=0)
+
+    # ---- Latency: time single-image predictions, like the API does ----
     samples = [load_pixels(rows[i % len(rows)], focal=focal) for i in range(min(16, len(rows)))]
     timings = []
     for i in range(warmups + repeats):
         before = time.perf_counter()
         np.asarray(model(preprocess(samples[i % len(samples)], name)[None], training=False))
+        # The first `warmups` runs are slower (TensorFlow sets things up), so they are not counted.
         if i >= warmups:
             timings.append((time.perf_counter() - before) * 1000)
+    # "Macro" metrics = simple mean over the three classes (precision.mean() etc.),
+    # so the small Moderate/Poor classes count as much as Good.
     return Benchmark(evaluation_schema=1, model=name, model_sha256=file_hash(artifact),
         model_version=metadata["version"], classes=list(CLASSES), accuracy=accuracy_score(actual, predicted),
         macro_precision=precision.mean(), macro_recall=recall.mean(), macro_f1=f1.mean(),
@@ -69,6 +78,8 @@ def main():
         parser.error(str(exc))
     if not rows:
         parser.error("No eligible evaluation images in the requested partition.")
+    # Reuse the API's checks, and make sure the model was trained with this exact manifest
+    # (otherwise the "test" images might have been seen during training).
     metadata = Registry(args.model_dir, args.output_dir).metadata(args.model)
     if not metadata or metadata.get("training_manifest_sha256") != file_hash(args.manifest):
         parser.error("Model metadata must match the approved training and evaluation manifest.")
@@ -76,7 +87,7 @@ def main():
         parser.error("Evaluation mode does not match the model artifact.")
     import tensorflow as tf
     import matplotlib
-    matplotlib.use("Agg")
+    matplotlib.use("Agg")  # draw charts straight to PNG files, without opening a window
     import matplotlib.pyplot as plt
     from sklearn.metrics import ConfusionMatrixDisplay
 
@@ -84,6 +95,7 @@ def main():
     model = tf.keras.models.load_model(artifact, compile=False)
     result = evaluate(model, args.model, rows, metadata, artifact, args.manifest, args.split, args.warmups, args.repeats)
     args.output_dir.mkdir(parents=True, exist_ok=True)
+    # Save two charts (confusion matrix and a metrics bar chart) and the JSON results.
     ConfusionMatrixDisplay(np.asarray(result.confusion_matrix), display_labels=CLASSES).plot(cmap="Blues")
     plt.tight_layout()
     plt.savefig(args.output_dir / f"{args.model}_confusion.png", dpi=160)

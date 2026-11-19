@@ -10,23 +10,37 @@ from training.preprocess import candidates, group_keys
 
 
 def make_splits(rows, seed, cambodia_min_groups):
+    """Assign every row to train / validation / test (and optionally cambodia_holdout).
+
+    Steps:
+      1. Join rows that must stay together (same scene, same file, near-duplicate) into groups.
+      2. Keep fixed groups where they belong (source test images -> test, train-only -> train).
+      3. Optionally set aside ~20% of Cambodian groups as a separate local holdout.
+      4. Place the remaining groups one by one into the split that keeps the class
+         balance closest to the target fractions (70/15/15, or 85/15 if a test set already exists).
+    """
+    # ---- Step 1: union-find ("disjoint set") to merge connected rows into groups ----
+    # parent[i] points towards the representative ("root") row of i's group.
     parent = list(range(len(rows)))
 
     def root(index):
+        # Follow parent links up to the root; also shortens the path for later calls.
         while parent[index] != index:
             parent[index] = parent[parent[index]]
             index = parent[index]
         return index
 
-    seen = {}
+    seen = {}  # group key -> first row index that had this key
     for index, row in enumerate(rows):
         for key in group_keys(row):
+            # Merge this row's group with the group of the first row that shared the key.
             parent[root(index)] = root(seen.setdefault(key, index))
 
     groups = defaultdict(list)
     for index, row in enumerate(rows):
         groups[root(index)].append(row)
 
+    # ---- Step 2: sort groups into categories ----
     local, pending, fixed, train_only = [], [], [], []
     for group in groups.values():
         source_splits = {row.get("original_split") for row in group}
@@ -43,7 +57,8 @@ def make_splits(rows, seed, cambodia_min_groups):
         else:
             pending.append(group)
 
-    rng = random.Random(seed)
+    # ---- Step 3: optional Cambodian holdout ----
+    rng = random.Random(seed)  # seeded, so the same seed always gives the same split
     rng.shuffle(local)
     holdout = []
     if len(local) >= max(cambodia_min_groups, 3):
@@ -57,8 +72,10 @@ def make_splits(rows, seed, cambodia_min_groups):
                 holdout, local = local[:target], local[target:]
                 break
             rng.shuffle(local)
+    # ---- Step 4: greedy, class-balanced assignment ----
     pending.extend(local)
     rng.shuffle(pending)
+    # Place the biggest groups first; small groups fill the gaps at the end.
     pending.sort(key=len, reverse=True)
 
     totals = Counter(r["verified_quality_label"] for group in pending for r in group)
@@ -68,6 +85,9 @@ def make_splits(rows, seed, cambodia_min_groups):
     counts = {name: Counter() for name in fractions}
     for group in pending:
         labels = Counter(r["verified_quality_label"] for r in group)
+        # How much worse the class balance of `partition` would get by adding this group.
+        # For each label: (new distance from target)^2 - (old distance)^2, scaled by the target size.
+        # The group goes to the split with the smallest penalty.
         def penalty(partition):
             count = counts[partition]
             fraction = fractions[partition]
@@ -83,6 +103,7 @@ def make_splits(rows, seed, cambodia_min_groups):
     for split in ("train", "validation", "test"):
         if {r["verified_quality_label"] for r in partitions[split]} != set(CLASSES):
             raise ValueError(f"Grouped split {split} lacks class coverage. Review group sizes and label balance.")
+    # Return a copy of every row with a new "split" column added.
     return [dict(row, split=split) for split, group in partitions.items() for row in group]
 
 

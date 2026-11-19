@@ -1,4 +1,12 @@
-"""Prepare an auditable road-quality split and record explicit StreetSurfaceVis approval."""
+"""Prepare an auditable road-quality split and record explicit StreetSurfaceVis approval.
+
+Two sub-commands:
+  prepare  - filter the audited images, remove duplicates, group photos taken close
+             together (in place or time), and propose train/validation/test splits.
+             Nothing is eligible for training yet.
+  approve  - after a human has reviewed the label mapping and usage rights, mark the
+             proposal as approved so training scripts can use it.
+"""
 import argparse
 import csv
 import hashlib
@@ -19,23 +27,27 @@ from training.preprocess import validate_partitions
 
 STREET = "streetSurfaceVis"
 CAMBODIA = "RoadSense_Cambodian"
+# StreetSurfaceVis uses 5 quality levels; we merge them into our 3 grades.
 MAPPING = {"excellent": "Good", "good": "Good", "intermediate": "Moderate",
            "bad": "Poor", "very_bad": "Poor"}
 SURFACES = ("asphalt", "concrete", "paving_stones", "sett", "unpaved")
 VERSION = "https://doi.org/10.5281/zenodo.11449977"
 LICENSE = "https://creativecommons.org/licenses/by-sa/4.0/"
 EARTH_RADIUS_M = 6_371_000
+# Photos closer than 400 m, or taken by the same person less than 60 s apart, count as one scene.
 GEOGRAPHIC_DISTANCE_M = 400
 SESSION_GAP_MS = 60_000
 PENDING = "street_mapping_scope_and_usage_review_pending"
 
 
 def read_rows(path):
+    """Read a CSV file into a list of dictionaries (one per row)."""
     with path.open(newline="", encoding="utf-8-sig") as file:
         return list(csv.DictReader(file))
 
 
 def write_rows(path, rows):
+    """Write rows to a new CSV file (mode "x" refuses to overwrite an existing file)."""
     with path.open("x", newline="", encoding="utf-8") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
@@ -48,6 +60,8 @@ def sha256(path):
 
 
 def verify_image_hashes(rows):
+    """Re-check every image's SHA-256 so the files are exactly the ones that were audited."""
+    # ExitStack keeps every opened ZIP archive open until the end, then closes them all.
     with ExitStack() as stack:
         archives = {}
         for row in rows:
@@ -59,11 +73,13 @@ def verify_image_hashes(rows):
             else:
                 digest = sha256(path)
             if (digest != row["sha256"] or row["read_status"] != "readable"
-                    or len(row["dhash"]) != 16):
+                    or len(row["dhash"]) != 16):  # dhash = 64-bit perceptual hash stored as 16 hex characters
                 raise ValueError(f"Re-audit image bytes or metadata for {row['image_id']}.")
 
 
 def street_metadata(rows, csv_path):
+    """Copy surface type, GPS position, capture time, original rating and licence info from the
+    official StreetSurfaceVis CSV onto each row, after checking the two match one-to-one."""
     source_rows = read_rows(csv_path)
     by_id = {r["mapillary_image_id"]: r for r in source_rows}
     if len(by_id) != len(source_rows) or set(by_id) != {r["original_id"] for r in rows}:
@@ -88,6 +104,8 @@ def street_metadata(rows, csv_path):
 
 
 def coordinates(rows):
+    """Convert latitude/longitude to 3-D points on a unit sphere, so straight-line (chord)
+    distance can be used for fast nearest-neighbour search."""
     degrees = np.array([[float(r["latitude"]), float(r["longitude"])] for r in rows])
     if not np.isfinite(degrees).all() or (np.abs(degrees) > [90, 180]).any():
         raise ValueError("Invalid StreetSurfaceVis coordinates.")
@@ -96,6 +114,8 @@ def coordinates(rows):
 
 
 def group_street_locations(rows):
+    """Give photos the same capture_group if they are within 400 m of each other, or were taken
+    by the same contributor less than 60 seconds apart. Uses union-find to merge groups."""
     parent = list(range(len(rows)))
 
     def root(index):
@@ -104,7 +124,9 @@ def group_street_locations(rows):
             index = parent[index]
         return index
 
+    # A k-d tree finds all pairs of points within a distance quickly.
     distances = cKDTree(coordinates(rows))
+    # Convert 400 m along the Earth's surface into a straight-line distance on the unit sphere.
     chord = 2 * np.sin(GEOGRAPHIC_DISTANCE_M / (2 * EARTH_RADIUS_M))
     for a, b in distances.query_pairs(chord):
         parent[root(a)] = root(b)
@@ -114,7 +136,8 @@ def group_street_locations(rows):
         user_id = json.loads(row["source_metadata"])["user_id"]
         contributors[user_id].append((int(row["captured_at"]), index))
     for captures in contributors.values():
-        captures.sort()
+        captures.sort()  # by capture time
+        # Compare each photo with the next one by the same contributor.
         for (first, a), (second, b) in zip(captures, captures[1:]):
             if second - first <= SESSION_GAP_MS:
                 parent[root(a)] = root(b)
@@ -129,6 +152,11 @@ def group_street_locations(rows):
 
 
 def cross_hash_pairs(left, right):
+    """Yield pairs of images (one from each list) that look nearly identical.
+
+    XOR of two perceptual hashes followed by bit_count() = how many of the 64 bits differ
+    (Hamming distance). 4 or fewer differing bits means the images look almost the same.
+    """
     hashes = [(row["original_id"], int(row["dhash"], 16)) for row in right]
     for row in left:
         value = int(row["dhash"], 16)
@@ -138,6 +166,8 @@ def cross_hash_pairs(left, right):
 
 
 def deduplicate_street(rows, reasons):
+    """Exclude byte-identical copies. If the copies were rated differently, exclude all of them
+    (the label is unreliable); otherwise keep one, preferring the copy in the author's test split."""
     by_hash = defaultdict(list)
     for row in rows:
         by_hash[row["sha256"]].append(row)
@@ -155,6 +185,7 @@ def deduplicate_street(rows, reasons):
 
 
 def prepare(args):
+    """The "prepare" command: build a proposed split for human review."""
     rows = sorted(read_rows(args.unified), key=lambda r: r["image_id"])
     by_id = {r["image_id"]: r for r in rows}
     if len(by_id) != len(rows):
@@ -164,6 +195,7 @@ def prepare(args):
         raise ValueError("Pilot IDs missing from the unified audit.")
     street = [r for r in rows if r["source"] == STREET]
     street_metadata(street, args.street_csv)
+    # image_id -> why it is excluded. Everything not listed here stays in the proposal.
     reasons = {}
     local = []
     for row in rows:
@@ -192,6 +224,7 @@ def prepare(args):
         else:
             raise ValueError(f"Unexpected source {source}.")
 
+    # ---- Remove duplicates and check for look-alike images across the original train/test ----
     verify_image_hashes(street + local)
     street = [r for r in street if r["image_id"] not in reasons]
     deduplicate_street(street, reasons)
@@ -207,6 +240,7 @@ def prepare(args):
             or {r["sha256"] for r in local} & {r["sha256"] for r in street}):
         raise ValueError("Review Cambodian/StreetSurfaceVis duplicate candidates before partitioning.")
 
+    # ---- Group near-duplicates and nearby photos so each group lands in one split ----
     for row in street + local:
         row["duplicate_group"] = ""
     for group in (author_train, author_test, local):
@@ -226,17 +260,20 @@ def prepare(args):
         proposed.append(dict(row, split=split, eligible="False",
                              exclusion_reasons=PENDING if row["source"] == STREET else "proposed_split"))
 
+    # Every row gets every column (missing ones empty) so the CSV is rectangular.
     proposed.sort(key=lambda r: (r["split"], r["image_id"]))
     fields = list(dict.fromkeys(key for row in proposed for key in row))
     proposed = [{key: row.get(key, "") for key in fields} for row in proposed]
     splits = {r["image_id"]: r["split"] for r in proposed}
     street_by_split = {split: [r for r in proposed if r["source"] == STREET and r["split"] == split]
                        for split in ("train", "validation", "test")}
+    # Report the closest distance (in metres) between photos of different splits, as a leakage check.
     minima = {}
     for a, b in (("train", "validation"), ("train", "test"), ("validation", "test")):
         chord, _ = cKDTree(coordinates(street_by_split[a])).query(coordinates(street_by_split[b]))
         minima[f"{a}/{b}"] = round(2 * EARTH_RADIUS_M * float(np.arcsin(chord.min() / 2)), 2)
 
+    # image_decisions.csv: an audit trail explaining what happened to every image.
     ledger = []
     for row in rows:
         identifier = row["image_id"]
@@ -266,6 +303,11 @@ def prepare(args):
 
 
 def approve(args):
+    """The "approve" command: turn a reviewed proposal into a training-ready manifest.
+
+    The approval JSON must contain the SHA-256 of the exact proposal file plus the
+    reviewer's name and evidence, so an approval can't be reused for a changed proposal.
+    """
     approval_bytes = args.approval.read_bytes()
     evidence = json.loads(approval_bytes)
     proposal_bytes = args.proposal.read_bytes()

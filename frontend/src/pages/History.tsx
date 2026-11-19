@@ -3,6 +3,7 @@ import {Empty, PageHeading, QualityTag, percent} from '../components/UI'
 import {useScan} from '../state'
 import {names} from '../types/api'
 
+/** History page: the last 20 scans, stored only in this browser (localStorage). */
 export default function History() {
   const {scans, clear} = useScan()
   return <>

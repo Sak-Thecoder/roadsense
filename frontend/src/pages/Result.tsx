@@ -5,12 +5,15 @@ import {api, ApiError} from '../services/api'
 import {useScan} from '../state'
 import type {Prediction} from '../types/api'
 
+/** Result page: send the photo to the active model and show the prediction. */
 export default function Result() {
   const {active, models, photo, preview, record} = useScan()
   const [result, setResult] = useState<Prediction>()
   const [error, setError] = useState<Error | null>(null)
   const [attempt, setAttempt] = useState(0)
   const invalidPhoto = error instanceof ApiError && error.status === 422
+  // Predict whenever the photo, the model or `attempt` (Retry button) changes, and save it to history.
+  // If the user leaves the page first, the request is aborted and the result ignored.
   useEffect(() => {
     if (!photo || !active) return
     const controller = new AbortController()

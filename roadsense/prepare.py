@@ -1,4 +1,8 @@
-"""Validate human decisions and make reproducible group-aware future splits."""
+"""Validate human decisions and make reproducible group-aware future splits.
+
+Input: audit metadata + a CSV of human labels. Output: the metadata with quality_label,
+split and eligible columns, plus a summary of how many more labels each class needs.
+"""
 import argparse, csv, json, random
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -8,6 +12,7 @@ def read(path):
     with open(path,newline='',encoding='utf-8-sig') as f: return list(csv.DictReader(f))
 
 def prepare(rows, labels, seed, minimum):
+    """Check labels, group related images (same duplicate or scene group), and split them 70/15/15."""
     if len({r['image_id'] for r in rows}) != len(rows): raise ValueError('Duplicate image IDs')
     decisions={}
     for r in labels:
@@ -15,6 +20,7 @@ def prepare(rows, labels, seed, minimum):
         if r['quality_label'] not in {'Good','Moderate','Poor','Uncertain','Reject'}: raise ValueError('Invalid human label')
         decisions[r['image_id']]=r['quality_label']
     if set(decisions)-{r['image_id'] for r in rows}: raise ValueError('Labels contain IDs absent from metadata')
+    # Union-find: images sharing a duplicate_group or scene_group end up in the same group.
     parent=list(range(len(rows))); seen={}
     def find(i):
         while parent[i]!=i: parent[i]=parent[parent[i]]; i=parent[i]
@@ -39,9 +45,11 @@ def prepare(rows, labels, seed, minimum):
     for g in sorted(items,key=usable,reverse=True):
         if id(g) in hold: split='cambodia_holdout'
         else:
+            # Greedy: put the group into the split that is furthest below its target share.
             split=max(targets,key=lambda k:(targets[k]-counts[k])/max(1,targets[k])); counts[split]+=usable(g)
         for r in g:
             label=decisions.get(r['image_id'],''); output.append(dict(r,quality_label=label,split=split,eligible=label in ('Good','Moderate','Poor')))
+    # How many more labelled images each class needs to reach `minimum`.
     distribution=Counter(decisions.values()); shortages={k:max(0,minimum-distribution[k]) for k in ('Good','Moderate','Poor')}
     return output, {'reviewed':len(decisions),'labels':dict(distribution),'shortages_to_minimum':shortages,'minimum_per_class':minimum,'eligible_split_counts':dict(counts),'cambodian_holdout_created':bool(hold),'missing_scene_groups':sum(not r.get('scene_group') for r in rows),'note':'Group and class balance are approximate; verify actual scene metadata and split distributions.'}
 

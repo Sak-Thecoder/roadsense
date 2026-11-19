@@ -1,4 +1,9 @@
-"""Audit an extracted RDD dataset and create a review pilot without changing originals."""
+"""Audit an extracted RDD dataset and create a review pilot without changing originals.
+
+RDD2022 = Road Damage Dataset (photos with bounding boxes of cracks/potholes).
+This script never modifies the source files; it only reads them and writes reports:
+metadata.csv, pilot.csv, issues.csv, summary.json, audit_charts.png and REPORT.md.
+"""
 import argparse
 import csv
 import hashlib
@@ -15,17 +20,22 @@ EXT = {'.jpg', '.jpeg', '.png', '.bmp', '.webp', '.tif', '.tiff'}
 FIELDS = ['image_id','image_path','source','country','original_id','original_split','annotation_path','annotation_format','annotation_status','damage_types','damage_counts','width','height','sha256','dhash','duplicate_group','scene_group','quality_label','license','attribution','source_url']
 
 def csv_write(path, rows, fields):
+    """Write rows to CSV; extrasaction="ignore" silently drops columns not listed in `fields`."""
     with open(path, 'w', encoding='utf-8', newline='') as f:
         w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore'); w.writeheader(); w.writerows(rows)
 
 def discover(root):
+    """All image files under `root`, skipping macOS "__MACOSX" and "._" metadata files."""
     return sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower() in EXT and '__MACOSX' not in p.parts and not p.name.startswith('._'))
 
 def process(item):
+    """Inspect one image: find its annotation, count damage boxes, hash it. Returns (row, errors)."""
     root, p = item
     rel = p.relative_to(root); parts = rel.parts
     split = next((x for x in parts if x in ('train','val','test')), '')
+    # RDD file names look like "Japan_001234"; removing "_<digits>" leaves the country prefix.
     country = re.sub(r'_\d+$', '', p.stem)
+    # Possible annotation locations: next to the image, or in a sibling annotations/ (XML) or labels/ (YOLO) folder.
     candidates = [p.with_suffix('.xml')]
     if p.parent.name == 'images':
         candidates += [p.parent.parent / 'annotations' / (p.stem + '.xml'), p.parent.parent / 'labels' / (p.stem + '.txt')]
@@ -35,8 +45,10 @@ def process(item):
         fmt = ann.suffix.lower()[1:]
         try:
             if fmt == 'xml':
+                # Pascal VOC XML: every <object><name> is one damage box; count them per class.
                 counts.update((x.text or '').strip() for x in ET.parse(ann).findall('.//object/name') if (x.text or '').strip())
             else:
+                # YOLO text format: "class x_center y_center width height", coordinates between 0 and 1.
                 for line in ann.read_text(encoding='utf-8-sig').splitlines():
                     fields = line.split()
                     if len(fields) != 5: raise ValueError('expected five YOLO fields')
@@ -50,20 +62,33 @@ def process(item):
     sha = hashlib.sha256(); width = height = ''; dh = ''
     try:
         with p.open('rb') as f:
+            # Hash the file in 1 MB blocks so large images don't have to fit in memory at once.
             for block in iter(lambda: f.read(1024*1024), b''): sha.update(block)
         with Image.open(p) as im:
             im.load(); width,height = im.size
+            # Difference hash (dHash), a 64-bit "perceptual" fingerprint: shrink the image to 9x8 grey
+            # pixels and, for each row, record 1 if a pixel is brighter than its right neighbour.
+            # Visually similar photos get hashes that differ in only a few bits, even after resizing.
             im = ImageOps.exif_transpose(im).convert('L').resize((9,8)); px = list(im.getdata()); val = 0
             for y in range(8):
                 for x in range(8): val = (val << 1) | (px[y*9+x] > px[y*9+x+1])
             dh = f'{val:016x}'
     except (OSError, ValueError) as e:
         sha = None; errors.append({'path':str(p),'issue':'unreadable image: '+str(e)})
+    # image_id = first 20 hex characters of the SHA-256 of the relative path: stable and unique.
     row = dict(image_id=hashlib.sha256(str(rel).encode()).hexdigest()[:20], image_path=str(p), source='RDD2022', country=country, original_id=p.stem, original_split=split, annotation_path=str(ann) if ann else '', annotation_format=fmt, annotation_status=status, damage_types='|'.join(sorted(counts)), damage_counts=json.dumps(dict(counts),sort_keys=True), width=width,height=height,sha256=sha.hexdigest() if sha else '',dhash=dh,duplicate_group='',scene_group='',quality_label='',license='',attribution='',source_url='')
     return row, errors
 
 def group_duplicates(rows, threshold=4):
+    """Give exact and near-duplicate images the same duplicate_group.
+
+    Near-duplicate = dHash differs in at most `threshold` bits. Comparing every pair
+    would be very slow for thousands of images, so hashes are split into 5 blocks and
+    only images sharing at least one identical block are compared (see comment below).
+    Returns (exact_duplicate_count, near_duplicate_links, number_of_groups).
+    """
     # Five disjoint bit blocks: two hashes <=4 bits apart share at least one block.
+    # Union-find: parent[i] leads to the representative of i's group.
     parent = list(range(len(rows)))
     def find(i):
         while parent[i] != i: parent[i] = parent[parent[i]]; i = parent[i]
@@ -71,6 +96,7 @@ def group_duplicates(rows, threshold=4):
     def union(a,b):
         a,b=find(a),find(b)
         if a != b: parent[b]=a
+    # First pass: merge rows with identical SHA-256 (same file) or identical dHash.
     exact = {}; unique = {}; exact_pairs = 0
     for i,r in enumerate(rows):
         sha=r['sha256']; dh=r['dhash']
@@ -80,6 +106,8 @@ def group_duplicates(rows, threshold=4):
         if dh:
             if dh in unique: union(i,unique[dh])
             else: unique[dh]=i
+    # Second pass: near duplicates. 64 bits = blocks of 13+13+13+13+12 bits. If two hashes differ in
+    # <= 4 bits, at most 4 blocks can differ, so at least one of the 5 blocks is identical (pigeonhole).
     buckets=defaultdict(list); near_edges=0
     for h,i in unique.items():
         v=int(h,16); candidates=set()
@@ -87,6 +115,7 @@ def group_duplicates(rows, threshold=4):
             shift=block*13; bits=12 if block==4 else 13; key=(block,(v>>shift)&((1<<bits)-1))
             candidates.update(buckets[key]); buckets[key].append((v,i))
         for other,j in candidates:
+            # XOR marks differing bits; bit_count() counts them (Hamming distance).
             if (v^other).bit_count() <= threshold:
                 if find(i)!=find(j): union(i,j); near_edges+=1
     components=defaultdict(list)
@@ -98,6 +127,11 @@ def group_duplicates(rows, threshold=4):
     return exact_pairs, near_edges, sum(len(v)>1 for v in components.values())
 
 def pilot(rows, size, seed):
+    """Pick `size` images for manual review, spread evenly over (country, damage type) combinations.
+
+    Round-robin: take one image from each combination in turn, never two from the same
+    duplicate group, until enough images are chosen.
+    """
     rng=random.Random(seed); eligible=[r for r in rows if r['sha256'] and r['annotation_status']!='invalid']
     rng.shuffle(eligible); strata=defaultdict(list)
     for r in eligible:
@@ -122,23 +156,28 @@ def main():
     root=Path(a.root).resolve(); out=Path(a.out)
     if not root.is_dir(): ap.error('root must be a directory')
     paths=discover(root); paths=paths[:a.limit] if a.limit else paths
+    # Process images in parallel threads (reading files and hashing is I/O-heavy).
     with ThreadPoolExecutor(max_workers=a.workers) as pool: results=list(pool.map(process,((root,p) for p in paths)))
+    # Each result is (row, errors); split them into one list of rows and one flat list of errors.
     rows=[r for r,e in results]; errors=[x for r,e in results for x in e]
     exact,edges,groups=group_duplicates(rows); selected=pilot(rows,a.pilot_size,a.seed)
     countries=Counter(r['country'] for r in rows); status=Counter(r['annotation_status'] for r in rows); classes=Counter(); co=Counter()
     components=defaultdict(list)
     for r in rows:
         if r['duplicate_group']: components[r['duplicate_group']].append(r)
+    # Duplicate groups that span more than one original split (train/val/test) = possible data leakage.
     cross_splits=sum(len({r['original_split'] for r in g if r['original_split']}) > 1 for g in components.values())
     country_annotations=Counter(r['country'] for r in rows if r['annotation_path'])
     for r in rows:
         classes.update(json.loads(r['damage_counts'])); types=sorted(filter(None,r['damage_types'].split('|')))
+        # Count each pair of damage types that appear together in the same image.
         for i,x in enumerate(types):
             for y in types[i+1:]: co[(x,y)]+=1
     summary={'images':len(rows),'countries':dict(countries),'annotation_status':dict(status),'annotation_formats':dict(Counter(r['annotation_format'] or 'missing' for r in rows)),'box_counts':dict(classes),'co_occurrence_images':{' + '.join(k):v for k,v in co.items()},'unreadable_images':sum('unreadable image:' in x['issue'] for x in errors),'exact_duplicate_extra_images':exact,'duplicate_components':groups,'duplicate_component_images':sum(map(len,components.values())),'cross_original_split_components':cross_splits,'annotation_files_by_country':dict(country_annotations),'near_union_edges':edges,'pilot_images':len(selected),'pilot_countries':dict(Counter(r['country'] for r in selected)),'sample_limit':a.limit,'seed':a.seed}
     print(json.dumps(summary,indent=2))
     if a.dry_run: return
     out.mkdir(parents=True,exist_ok=True); csv_write(out/'metadata.csv',rows,FIELDS); csv_write(out/'pilot.csv',selected,FIELDS); csv_write(out/'issues.csv',errors,['path','issue']); (out/'summary.json').write_text(json.dumps(summary,indent=2))
+    # ---- Charts and a Markdown report ----
     import matplotlib; matplotlib.use('Agg'); import matplotlib.pyplot as plt
     fig,ax=plt.subplots(1,2,figsize=(12,5)); ax[0].barh(list(countries),list(countries.values())); ax[0].set_title('Images by filename prefix'); ax[1].bar(list(classes),list(classes.values())); ax[1].set_title('Bounding boxes by recorded class'); fig.tight_layout(); fig.savefig(out/'audit_charts.png',dpi=150); plt.close(fig)
     def table(d): return '\n'.join(f'| {k} | {v} |' for k,v in d.items()) or '| None | 0 |'

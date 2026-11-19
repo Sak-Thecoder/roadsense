@@ -5,9 +5,11 @@ import {ActionLink, ErrorNotice, Loading, PageHeading, QualityTag} from '../comp
 import {useScan} from '../state'
 import {names, type Model} from '../types/api'
 
+/** Analyze page (home): choose a photo and a model, then go to the result page. */
 export default function Home() {
   const {models, status, active, setActive, photo, scans, retry} = useScan()
   const navigate = useNavigate()
+  // Whether the chosen model is the small Cambodian pilot (shown with a warning).
   const pilot = models.find(model => model.model === active)?.use_scope === "cambodian_capture_date_pilot"
   return <>
     <PageHeading title="Analyze road">Capture or upload an image to classify the visible road surface.</PageHeading>
