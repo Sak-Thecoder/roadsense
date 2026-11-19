@@ -61,7 +61,8 @@ def test_transfer_head_forward_and_optimizer_step(name):
 
 
 @pytest.mark.parametrize("selection_metric,feature_passes,improved", [
-    ("val_accuracy", 2, False), ("val_loss", 0, False), ("val_macro_f1", 2, True), ("val_macro_f1", 0, True)])
+    ("val_accuracy", 2, False), ("val_loss", 0, False), ("val_macro_f1", 2, True), ("val_macro_f1", 0, True),
+    ("val_macro_f1", 2, "fine"), ("val_macro_f1", 0, "fine")])
 def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypatch, selection_metric, feature_passes,
                                                              improved):
     import csv
@@ -80,16 +81,19 @@ def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypat
             path = tmp_path / f"{split}-{label}.png"
             rgb = tuple(230 - partition_index if index == label_index else 12 for index in range(3))
             Image.new("RGB", (35, 24), rgb).save(path)
-            rows.append(dict(image_id=path.stem, image_path=str(path), sha256=file_hash(path),
-                             verified_quality_label=label, read_status="readable", eligible="True",
-                             permission_status="confirmed", capture_group=path.stem, split=split))
+            for surface in (("asphalt", "sett") if improved == "fine" else ("",)):
+                rows.append(dict(image_id=f"{path.stem}-{surface}", image_path=str(path), sha256=file_hash(path),
+                                 verified_quality_label=label, read_status="readable", eligible="True",
+                                 permission_status="confirmed", capture_group=f"{path.stem}-{surface}",
+                                 split=split, source="streetSurfaceVis", surface_type=surface,
+                                 original_label=("good", "intermediate", "bad")[label_index]))
     manifest = tmp_path / "fixture.csv"
     with manifest.open("w", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
 
-    def tiny_classifier(*_args, **_kwargs):
+    def tiny_classifier(*_args, outputs=3, **_kwargs):
         input_shape = (224, 224, 3)
         features = tf.keras.Sequential([
             tf.keras.Input(input_shape), tf.keras.layers.Conv2D(4, 1)
@@ -97,14 +101,15 @@ def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypat
         features.trainable = False
         inputs = tf.keras.Input(input_shape)
         pooled = tf.keras.layers.GlobalAveragePooling2D(name="road_features")(features(inputs, training=False))
-        outputs = tf.keras.layers.Dense(3, activation="softmax")(pooled)
-        return tf.keras.Model(inputs, outputs), features
+        scores = tf.keras.layers.Dense(outputs, activation="softmax")(pooled)
+        return tf.keras.Model(inputs, scores), features
 
     config = tmp_path / "config.json"
     config.write_text(json.dumps(dict(head_epochs=1, fine_tune_epochs=1, fine_tune_layers=1,
         dropout=0.25, head_lr=0.001, fine_tune_lr=0.00001, seed=42, patience=2, batch_size=3,
         selection_metric=selection_metric, feature_passes=feature_passes, cache_decoded=bool(feature_passes),
-        **(dict(focal_crop=True, augmentation="strong", class_weight="balanced") if improved else {}))))
+        **(dict(focal_crop=True, augmentation="strong", class_weight="balanced") if improved else {}),
+        **(dict(label_scheme="surface_x_level", label_smoothing=0.1) if improved == "fine" else {}))))
     models, results = tmp_path / "models", tmp_path / "results"
     monkeypatch.setattr(train, "build_model", tiny_classifier)
     monkeypatch.setattr(sys, "argv", ["train", "--manifest", str(manifest), "--model", "mobilenetv2",
@@ -123,7 +128,13 @@ def test_train_and_evaluate_artifacts_from_isolated_manifest(tmp_path, monkeypat
     from backend.app.preprocess import FOCAL_PREPROCESSING, PREPROCESSING
     assert metadata["preprocessing"] == (FOCAL_PREPROCESSING if improved else PREPROCESSING)
     metrics = registry.benchmark("mobilenetv2")
-    assert metrics is not None and metrics.dataset_size == 3
+    assert metrics is not None and metrics.dataset_size == (6 if improved == "fine" else 3)
+    if improved == "fine":
+        assert metadata["label_scheme"] == "surface_x_level" and len(metadata["training_classes"]) == 6
+        assert 0 <= selection["val_grade_accuracy"] <= 1
+        saved = tf.keras.models.load_model(models / "mobilenetv2.keras", compile=False)
+        scores = np.asarray(saved(np.zeros((2, 224, 224, 3), np.float32)))
+        assert scores.shape == (2, 3) and np.allclose(scores.sum(axis=1), 1, atol=1e-5)
     assert (results / "mobilenetv2_confusion.png").is_file()
     assert (results / "mobilenetv2_metrics.png").is_file()
 

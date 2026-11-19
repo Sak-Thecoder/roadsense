@@ -99,13 +99,17 @@ def augmentation_layers(kind, seed):
     return tf.keras.Sequential(layers)
 
 
+def grade_index(row):
+    return CLASSES.index(row["verified_quality_label"])
+
+
 def dataset(rows, model, batch_size, training=False, seed=42, cache_decoded=False, focal=False,
-            augmentation="basic"):
+            augmentation="basic", label_index=grade_index):
     import tensorflow as tf
 
     def examples():
         for row in rows:
-            yield load_pixels(row, focal=focal).astype(np.uint8), np.int32(CLASSES.index(row["verified_quality_label"]))
+            yield load_pixels(row, focal=focal).astype(np.uint8), np.int32(label_index(row))
 
     data = tf.data.Dataset.from_generator(examples, output_signature=(
         tf.TensorSpec((*INPUT_SIZE, 3), tf.uint8), tf.TensorSpec((), tf.int32)))

@@ -13,7 +13,30 @@ from training.preprocess import PILOT_SCOPE, dataset, partition_rows
 MONITORS = {"val_accuracy": "max", "val_macro_f1": "max", "val_loss": "min"}
 
 
-def build_model(model_name, dropout, weights="imagenet", head_units=0):
+LABEL_SCHEMES = ("grade", "surface_x_level")
+
+
+def fine_label(row, scheme):
+    """Training target. surface_x_level keeps StreetSurfaceVis's per-surface grading scale apart."""
+    grade = row["verified_quality_label"]
+    if scheme == "grade":
+        return grade
+    level = row.get("original_label") if row.get("source") == "streetSurfaceVis" else grade.lower()
+    return f"{row.get('surface_type') or 'local'}:{level or grade.lower()}"
+
+
+def label_space(rows, scheme):
+    """Training classes and the grade each one belongs to, in a fixed order."""
+    if scheme == "grade":
+        return list(CLASSES), list(range(len(CLASSES)))
+    grades = {}
+    for row in rows:
+        grades.setdefault(fine_label(row, scheme), CLASSES.index(row["verified_quality_label"]))
+    classes = sorted(grades)
+    return classes, [grades[c] for c in classes]
+
+
+def build_model(model_name, dropout, weights="imagenet", head_units=0, outputs=len(CLASSES)):
     import tensorflow as tf
 
     constructors = dict(zip(MODELS, (tf.keras.applications.MobileNetV2,
@@ -26,32 +49,57 @@ def build_model(model_name, dropout, weights="imagenet", head_units=0):
     features = backbone(inputs, training=False)
     pooled = tf.keras.layers.GlobalAveragePooling2D(name="road_features")(features)
     hidden = tf.keras.layers.Dense(head_units, activation="relu")(pooled) if head_units else pooled
-    outputs = tf.keras.layers.Dense(len(CLASSES), activation="softmax")(tf.keras.layers.Dropout(dropout)(hidden))
-    return tf.keras.Model(inputs, outputs), backbone
+    scores = tf.keras.layers.Dense(outputs, activation="softmax")(tf.keras.layers.Dropout(dropout)(hidden))
+    return tf.keras.Model(inputs, scores), backbone
 
 
-def balanced_class_weights(rows):
+def grade_output(model, grade_of):
+    """Append a fixed layer that sums fine-class probabilities into Good/Moderate/Poor."""
+    import numpy as np
+    import tensorflow as tf
+
+    matrix = np.zeros((len(grade_of), len(CLASSES)), np.float32)
+    matrix[np.arange(len(grade_of)), grade_of] = 1
+    layer = tf.keras.layers.Dense(len(CLASSES), use_bias=False, trainable=False, name="grade_probabilities")
+    wrapped = tf.keras.Model(model.inputs, layer(model.output))
+    layer.set_weights([matrix])
+    return wrapped
+
+
+def balanced_class_weights(rows, grade_of=None):
+    """Inverse grade frequency; with fine classes, each class takes the weight of its grade."""
     counts = Counter(row["verified_quality_label"] for row in rows)
-    return {index: len(rows) / (len(CLASSES) * counts[label]) for index, label in enumerate(CLASSES)}
+    weights = [len(rows) / (len(CLASSES) * counts[label]) for label in CLASSES]
+    return {index: weights[grade] for index, grade in enumerate(grade_of or range(len(CLASSES)))}
 
 
-def macro_f1_callback(validation):
-    """Add val_macro_f1 to the epoch logs; list it before callbacks that monitor it."""
+def macro_f1_callback(validation, grade_of=None):
+    """Add grade-level val_macro_f1 and val_grade_accuracy to the epoch logs.
+
+    List it before callbacks that monitor these values."""
     import numpy as np
     import tensorflow as tf
     from sklearn.metrics import f1_score
+
+    grades = np.asarray(grade_of if grade_of is not None else range(len(CLASSES)))
 
     class MacroF1(tf.keras.callbacks.Callback):
         def on_epoch_end(self, epoch, logs=None):
             actual, predicted = [], []
             for inputs, labels in validation:
-                predicted.append(np.asarray(self.model(inputs, training=False)).argmax(axis=1))
-                actual.append(np.asarray(labels))
-            score = f1_score(np.concatenate(actual), np.concatenate(predicted),
-                             labels=range(len(CLASSES)), average="macro", zero_division=0)
+                scores = np.asarray(self.model(inputs, training=False))
+                summed = np.zeros((len(scores), len(CLASSES)))
+                np.add.at(summed.T, grades, scores.T)
+                predicted.append(summed.argmax(axis=1))
+                labels = np.asarray(labels)
+                actual.append(grades[labels.argmax(axis=1) if labels.ndim == 2 else labels])
+            actual, predicted = np.concatenate(actual), np.concatenate(predicted)
+            score = f1_score(actual, predicted, labels=range(len(CLASSES)), average="macro", zero_division=0)
+            accuracy = float((actual == predicted).mean())
             if logs is not None:
                 logs["val_macro_f1"] = float(score)
-            print(f" - val_macro_f1: {score:.4f}", flush=True)
+                logs["val_grade_accuracy"] = accuracy
+            print(f" - val_macro_f1: {score:.4f} - val_grade_accuracy: {accuracy:.4f}", flush=True)
 
     return MacroF1()
 
@@ -110,30 +158,48 @@ def main():
     class_weight = config.get("class_weight")
     if class_weight not in {None, "balanced"}:
         parser.error("class_weight must be null or balanced.")
+    scheme = config.get("label_scheme", "grade")
+    if scheme not in LABEL_SCHEMES or (args.capture_date_pilot and scheme != "grade"):
+        parser.error(f"label_scheme must be one of {', '.join(LABEL_SCHEMES)} (grade in pilot mode).")
+    smoothing = float(config.get("label_smoothing", 0))
+    fine_classes, grade_of = label_space(partitions["train"], scheme)
+    fallback = {grade: fine_classes[grade_of.index(grade)] for grade in set(grade_of)}
+
+    def label_index(row):
+        # A fine class absent from training is scored as its grade's first fine class (grade metrics unaffected).
+        label = fine_label(row, scheme)
+        return fine_classes.index(label if label in fine_classes else fallback[CLASSES.index(
+            row["verified_quality_label"])])
     better = max if mode == "max" else min
     seed = config["seed"]
     tf.keras.utils.set_random_seed(seed)
     tf.config.experimental.enable_op_determinism()
     cache_decoded = args.capture_date_pilot or config.get("cache_decoded", False)
     train = dataset(partitions["train"], args.model, config["batch_size"], training=True, seed=seed,
-                    cache_decoded=cache_decoded, focal=focal, augmentation=augmentation)
+                    cache_decoded=cache_decoded, focal=focal, augmentation=augmentation, label_index=label_index)
     validation = None if args.capture_date_pilot else dataset(
-        partitions["validation"], args.model, config["batch_size"], cache_decoded=cache_decoded, focal=focal)
-    weights_by_class = balanced_class_weights(partitions["train"]) if class_weight else None
+        partitions["validation"], args.model, config["batch_size"], cache_decoded=cache_decoded, focal=focal,
+        label_index=label_index)
+    loss = "sparse_categorical_crossentropy"
+    if smoothing:
+        loss = tf.keras.losses.CategoricalCrossentropy(label_smoothing=smoothing)
+        train, validation = (None if data is None else data.map(
+            lambda pixels, labels: (pixels, tf.one_hot(labels, len(fine_classes)))) for data in (train, validation))
+    weights_by_class = balanced_class_weights(partitions["train"], grade_of) if class_weight else None
     if weights_by_class:
-        print(f"Class weights: { {CLASSES[i]: round(w, 3) for i, w in weights_by_class.items()} }", flush=True)
-    model, backbone = build_model(args.model, config["dropout"], head_units=config.get("head_units", 0))
+        print(f"Class weights: { {fine_classes[i]: round(w, 3) for i, w in weights_by_class.items()} }", flush=True)
+    model, backbone = build_model(args.model, config["dropout"], head_units=config.get("head_units", 0),
+                                  outputs=len(fine_classes))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=args.output_dir) as temporary:
         directory = Path(temporary)
 
         def fit(phase, learning_rate, epochs, network, inputs, validation_data):
-            network.compile(optimizer=tf.keras.optimizers.Adam(learning_rate),
-                            loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+            network.compile(optimizer=tf.keras.optimizers.Adam(learning_rate), loss=loss, metrics=["accuracy"])
             checkpoint = directory / f"{phase}.weights.h5"
             history = network.fit(inputs, validation_data=validation_data, epochs=epochs, shuffle=False,
                                   class_weight=weights_by_class, callbacks=[
-                macro_f1_callback(validation_data),
+                macro_f1_callback(validation_data, grade_of),
                 tf.keras.callbacks.ModelCheckpoint(
                     checkpoint, monitor=monitor, mode=mode, save_best_only=True, save_weights_only=True),
                 tf.keras.callbacks.EarlyStopping(monitor=monitor, mode=mode, patience=config["patience"]),
@@ -143,7 +209,7 @@ def main():
             epoch = better(range(len(history[monitor])), key=history[monitor].__getitem__)
             network.load_weights(checkpoint)
             selected = dict(phase=phase, epoch=epoch + 1, metric=monitor,
-                            **{key: history[key][epoch] for key in MONITORS})
+                            **{key: history[key][epoch] for key in (*MONITORS, "val_grade_accuracy")})
             return selected, checkpoint, history
 
         if args.capture_date_pilot:
@@ -175,13 +241,14 @@ def main():
                 selected, weights = tuned_selection, tuned
             model.load_weights(weights)
         staged = directory / target.name
-        model.save(staged)
+        (model if scheme == "grade" else grade_output(model, grade_of)).save(staged)
         digest = file_hash(staged)
         metadata = dict(model=args.model, version=digest[:12], sha256=digest, classes=list(CLASSES),
                         input_size=list(INPUT_SIZE), preprocessing=FOCAL_PREPROCESSING if focal else PREPROCESSING,
                         config=config,
                         training_manifest_sha256=file_hash(args.manifest), history=histories,
-                        training_examples=len(partitions["train"]),
+                        training_examples=len(partitions["train"]), label_scheme=scheme,
+                        training_classes=fine_classes,
                         partition_sources={split: dict(Counter(r.get("source") or "unspecified" for r in rows))
                                            for split, rows in partitions.items()})
         if args.capture_date_pilot:
