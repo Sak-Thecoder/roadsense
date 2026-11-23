@@ -56,8 +56,8 @@ python -m training.evaluate --manifest work/splits.csv --model resnet50 \
   --model-dir work/run/models --output-dir work/run/results
 ```
 
-**Data:**
-- [StreetSurfaceVis](https://zenodo.org/records/11449977) (CC BY-SA 4.0): 9,122 German street images, mapped from 5 smoothness levels to 3 classes.
+**Data** (full credits in [Datasets and credits](#datasets-and-credits)):
+- StreetSurfaceVis: 9,122 German street images, mapped from 5 smoothness levels to 3 classes.
 - 50 self-collected Cambodian photos, used with the owner's permission.
 
 The split groups photos by location, capture time and near-duplicates, so no scene appears in both training and test.
@@ -104,6 +104,19 @@ docs/           dataset notes, Cambodian pilot, deployment
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for Docker and hosting.
 
+## Datasets and credits
+
+RoadSense builds on other people's work. Thank you to:
+
+- **StreetSurfaceVis:** the main training and test data, by Alexandra Kapp, Edith Hoffmann, Esther Weigmann and Helena Mihaljević. The images are crowdsourced from [Mapillary](https://www.mapillary.com/) contributors and released under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/).
+  - Dataset: [Zenodo record 11449977](https://zenodo.org/records/11449977)
+  - Paper: A. Kapp, E. Hoffmann, E. Weigmann and H. Mihaljević, "StreetSurfaceVis: a dataset of crowdsourced street-level imagery annotated by road surface type and quality," *Scientific Data*, 2025 ([open access](https://pmc.ncbi.nlm.nih.gov/articles/PMC11739464/))
+- **Cambodian road photos:** taken and labelled by the RoadSense team.
+- **SegFormer-B0 (road check):** by E. Xie et al. (NVIDIA), trained on the [ADE20K](https://ade20k.csail.mit.edu/) scene-parsing dataset. We use the ONNX export [Xenova/segformer-b0-finetuned-ade-512-512](https://huggingface.co/Xenova/segformer-b0-finetuned-ade-512-512).
+- **ImageNet weights:** MobileNetV2, ResNet50 and EfficientNetB0 start from ImageNet-pretrained weights in [Keras Applications](https://keras.io/api/applications/).
+
+The licence below covers the code only. The images and pretrained models keep their own licences, so check them before reusing or sharing anything built from them.
+
 ## License
 
-[MIT](LICENSE)
+The code is released under the [MIT License](LICENSE).
