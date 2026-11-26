@@ -6,17 +6,17 @@ The app runs on a React front end and a FastAPI backend, using three transfer-le
 
 ## Results
 
-These are the results on the 776-image StreetSurfaceVis test set, which was held out and evaluated once.
+These are the results on the 776-image StreetSurfaceVis test set, which was held out and evaluated once. They are the same numbers the app shows on its Benchmark page (from `backend/results/*.json`).
 
-| Model | Accuracy | Macro F1 | Size | CPU time / image |
-|---|---:|---:|---:|---:|
-| MobileNetV2 | 82.7% | 0.696 | 10 MB | 53 ms |
-| **ResNet50** | **84.1%** | **0.732** | 96 MB | 124 ms |
-| EfficientNetB0 | 80.8% | 0.702 | 18 MB | 114 ms |
+| Model | Correct | Accuracy | Macro F1 | Size | CPU time / image |
+|---|---:|---:|---:|---:|---:|
+| MobileNetV2 | 642 / 776 | 82.7% | 69.6% | 10.3 MB | 52.7 ms |
+| **ResNet50** | **653 / 776** | **84.1%** | **73.2%** | 96.1 MB | 124.2 ms |
+| EfficientNetB0 | 627 / 776 | 80.8% | 70.2% | 17.7 MB | 114.3 ms |
 
 - ResNet50 is the most accurate model.
 - MobileNetV2 is the best choice for speed and size.
-- Moderate is the hardest class for every model (F1 ≈ 0.45), because it is easily confused with Good.
+- Moderate is the hardest class for every model (F1 about 44–47%), because it is easily confused with Good.
 - The test images come from Germany. Accuracy on Cambodian roads has not been measured properly yet.
 
 ## Run locally

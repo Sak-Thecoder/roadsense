@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react'
 import {ChartNoAxesColumn} from 'lucide-react'
 import {Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from 'recharts'
-import {Empty, ErrorNotice, Loading, PageHeading, percent} from '../components/UI'
+import {Empty, ErrorNotice, Loading, PageHeading, metricPercent} from '../components/UI'
 import {api} from '../services/api'
 import {names, type Benchmark as Metrics, type Model} from '../types/api'
 
@@ -37,7 +37,7 @@ export default function Benchmark() {
           Local pilot evaluated on {model.dataset_size} photos from one separate capture date. Geographic independence is unverified.
         </p>}
         <div className="metrics">{[['Accuracy',model.accuracy],['Macro precision',model.macro_precision],['Macro recall',model.macro_recall],['Macro F1',model.macro_f1]].map(([title,value]) =>
-          <section className="card metric" key={title}><span>{title}</span><strong>{percent(Number(value))}</strong></section>)}</div>
+          <section className="card metric" key={title}><span>{title}</span><strong>{metricPercent(Number(value))}</strong></section>)}</div>
         <div className="benchmark-grid">
           <section className="card"><h2>Confusion matrix</h2><p className="subtle">Rows are actual classes. Columns are predicted classes.</p>
             <table className="matrix"><thead><tr><th scope="col">Actual</th>{model.classes.map(c=><th scope="col" key={c}>{c}</th>)}</tr></thead>
@@ -60,8 +60,8 @@ export default function Benchmark() {
           <table><thead><tr><th>Class</th><th>Precision</th><th>Recall</th><th>F1</th><th>Images</th></tr></thead><tbody>
             {model.classes.map(label => {
               const metrics = model.per_class[label]
-              return <tr key={label}><th scope="row">{label}</th><td>{percent(metrics.precision)}</td>
-                <td>{percent(metrics.recall)}</td><td>{percent(metrics.f1)}</td><td>{metrics.support}</td></tr>
+              return <tr key={label}><th scope="row">{label}</th><td>{metricPercent(metrics.precision)}</td>
+                <td>{metricPercent(metrics.recall)}</td><td>{metricPercent(metrics.f1)}</td><td>{metrics.support}</td></tr>
             })}
           </tbody></table>
         </details>

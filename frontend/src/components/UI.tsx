@@ -8,6 +8,8 @@ import {classes, names, type Prediction, type Quality} from '../types/api'
 
 /** 0.834 -> "83%" */
 export const percent = (value: number) => `${Math.round(value * 100)}%`
+/** 0.8415 -> "84.1%"; one decimal for test-set metrics, matching the README and the accuracy chart. */
+export const metricPercent = (value: number) => `${(value * 100).toFixed(1)}%`
 const symbols: Record<Quality, LucideIcon> = {Good:Check, Moderate:TriangleAlert, Poor:X}
 
 /** Coloured label with an icon for Good / Moderate / Poor. */
