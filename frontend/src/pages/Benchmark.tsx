@@ -3,13 +3,13 @@ import {ChartNoAxesColumn} from 'lucide-react'
 import {Bar, BarChart, ResponsiveContainer, Tooltip, XAxis, YAxis} from 'recharts'
 import {Empty, ErrorNotice, Loading, PageHeading, metricPercent} from '../components/UI'
 import {api} from '../services/api'
-import {names, type Benchmark as Metrics, type Model} from '../types/api'
+import {defaultModel, names, type Benchmark as Metrics, type Model} from '../types/api'
 
 /** Benchmark page: saved test-set metrics, confusion matrix, accuracy chart, speed and size. */
 export default function Benchmark() {
   const [data, setData] = useState<Metrics[]>()
   const [error, setError] = useState('')
-  const [selected, select] = useState<Model>('mobilenetv2')
+  const [selected, select] = useState<Model>(defaultModel)
   const [attempt, retry] = useState(0)
   useEffect(() => {
     const controller = new AbortController()

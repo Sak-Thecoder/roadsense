@@ -1,6 +1,6 @@
 import {createContext, useCallback, useContext, useEffect, useState, type ReactNode} from 'react'
 import {api} from './services/api'
-import type {Model, ModelInfo, Prediction} from './types/api'
+import {defaultModel, type Model, type ModelInfo, type Prediction} from './types/api'
 
 // A saved scan = an API prediction plus a unique id and the time it was made.
 type Scan = Prediction & {id: string; date: string}
@@ -35,8 +35,10 @@ function useScanState() {
       .then(([available, health]) => {
         setModels(available)
         setLimit(health.max_upload_bytes)
-        // Keep the previously chosen model if still available, otherwise pick the first available one.
+        // Keep the previously chosen model if still available, otherwise use the default model (ResNet50),
+        // and fall back to the first available one if the default is missing.
         setActive(previous => available.find(m => m.available && m.model === previous)?.model
+          || available.find(m => m.available && m.model === defaultModel)?.model
           || available.find(m => m.available)?.model || '')
         setStatus('ready')
       }).catch(() => {if (!controller.signal.aborted) setStatus('offline')})

@@ -14,7 +14,7 @@ These are the results on the 776-image StreetSurfaceVis test set, which was held
 | **ResNet50** | **653 / 776** | **84.1%** | **73.2%** | 96.1 MB | 124.2 ms |
 | EfficientNetB0 | 627 / 776 | 80.8% | 70.2% | 17.7 MB | 114.3 ms |
 
-- ResNet50 is the most accurate model.
+- **ResNet50 is the final model.** It is the most accurate, so the app selects it by default. The other two stay available for comparison.
 - MobileNetV2 is the best choice for speed and size.
 - Moderate is the hardest class for every model (F1 about 44–47%), because it is easily confused with Good.
 - The test images come from Germany. Accuracy on Cambodian roads has not been measured properly yet.

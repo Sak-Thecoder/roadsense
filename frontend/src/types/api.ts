@@ -14,3 +14,5 @@ export interface Benchmark {
 }
 export interface Health {status: string; available_models: Model[]; classes: Quality[]; max_upload_bytes: number}
 export const names: Record<Model, string> = {mobilenetv2:'MobileNetV2', resnet50:'ResNet50', efficientnetb0:'EfficientNetB0'}
+/** The final model: highest test accuracy and macro F1, so the app selects it first. */
+export const defaultModel: Model = 'resnet50'
