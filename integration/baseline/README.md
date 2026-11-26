@@ -1,5 +1,7 @@
 # RoadSense baseline preparation
 
+> **Audit record from 2026-11-15.** It describes the data before training. Since then the StreetSurfaceVis mapping and split were approved (2026-11-16) and the quality_v3 models were trained on them. See [docs/DATASET_UTILIZATION.md](../../docs/DATASET_UTILIZATION.md) for how the data is used now.
+
 Start with [STATUS.md](reports/STATUS.md), [RIGHTS.md](reports/RIGHTS.md), and [DUPLICATES_AND_SPLITS.md](reports/DUPLICATES_AND_SPLITS.md). The datasets, gallery, manifests, and per-image audit outputs are local research files. Open `gallery/index.html` locally once the gallery has been generated. It is a stratified review aid, not a random estimate of dataset prevalence. Gallery previews are derived from the original images and carry the source license; do not redistribute without appropriate rights and attribution.
 
 The owner-confirmed current records are `manifests/owner_confirmed/cambodian_reviewed.csv` and `manifests/owner_confirmed/unified_metadata.csv`. The original source records and previous integration audit are unchanged. The 95 existing entries were explicitly confirmed, not inferred from folders. An owner attestation is recorded at `reports/owner_confirmation.json`; the reviewer name and inspection date are blank because they were not supplied. The 50 online images remain unconfirmed for training. The RDD pilot remains at `../../work/full/pilot.csv`.

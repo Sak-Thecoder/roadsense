@@ -1,6 +1,8 @@
 # Cambodian capture-date pilot
 
-RoadSense has three locally installed pilot models trained from the owner-authorized, reviewed Cambodian photos. The pilot manifest uses EXIF capture dates checked against the filenames. The 50 photos have unique file hashes and no recorded perceptual duplicate group. Their locations could not be verified from the available metadata.
+> **Historical record.** These pilot models were replaced on 2026-11-19 by the quality_v3 models trained on StreetSurfaceVis plus these 50 photos. See the [README](../README.md) for current results. The 50 photos are now in the training set, so this pilot test can no longer be repeated with the current models.
+
+Before the full dataset was approved, RoadSense trained three pilot models from the owner-authorized, reviewed Cambodian photos. The pilot manifest uses EXIF capture dates checked against the filenames. The 50 photos have unique file hashes and no recorded perceptual duplicate group. Their locations could not be verified from the available metadata.
 
 | Capture date | Use | Good | Moderate | Poor | Total |
 |---|---|---:|---:|---:|---:|
@@ -17,4 +19,4 @@ All three runs used the same fixed 12-epoch schedule. Each trained a three-class
 
 Predicting the most frequent training class, Moderate, for every test photo would give 10/21 correct (47.6%). All three models missed both Poor examples. These results support a functional application demonstration and reveal the need for a larger geographically grouped dataset before relying on classifications. Road locations may overlap across dates. The benchmark applies no geographic independence claim.
 
-Latency is the median of 100 synchronous batch-one measurements after 10 warm-ups on the local ARM Mac CPU with TensorFlow 2.21.0. It includes model-specific pixel preprocessing and excludes image decoding, model loading, and network time. The per-model JSON, confusion matrices, and metric charts are in `backend/results/`. The original project-wide approval manifest still tracks the evidence needed for the broader study. See the [README](../README.md) for pilot reproduction commands.
+Latency is the median of 100 synchronous batch-one measurements after 10 warm-ups on the local ARM Mac CPU with TensorFlow 2.21.0. It includes model-specific pixel preprocessing and excludes image decoding, model loading, and network time. The pilot's per-model JSON, confusion matrices, and metric charts are kept locally in `work/pilot-backend-backup-20261119/results/`. The original project-wide approval manifest still tracks the evidence needed for the broader study. See the [README](../README.md) for pilot reproduction commands.

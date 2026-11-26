@@ -1,5 +1,7 @@
 # RoadSense ML investigation
 
+> **Historical record.** This report analyses the earlier Cambodian pilot models (21 test photos), which were replaced on 2026-11-19 by the quality_v3 models. Some findings have since been addressed: images are now cropped to the lower-centre road region, and training uses 7,137 images instead of 29. See the [README](../README.md) for current results.
+
 ## Scope and evidence
 
 This investigation re-ran all three saved models against the exact 21-image held-out pilot manifest, verified each model's artifact and training-manifest hashes, and reproduced the existing confusion matrices. The 29 training images and 21 test images are grouped by two capture dates. Capture locations are unknown. These test images have now been inspected for diagnosis, so preserve an additional independent final test set before choosing a model or tuning preprocessing.

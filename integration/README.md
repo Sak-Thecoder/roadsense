@@ -1,5 +1,7 @@
 # RoadSense dataset integration
 
+> **Audit record from 2026-11-15.** It describes the data before training. Since then the StreetSurfaceVis mapping and split were approved (2026-11-16) and the quality_v3 models were trained on them. See [docs/DATASET_UTILIZATION.md](../docs/DATASET_UTILIZATION.md) for how the data is used now.
+
 This directory audits the available three datasets without changing their originals. It does not train a model or assign train, validation, or test splits. The dated audit folder contains the results; `sample_run` is an initial 30-per-source test, not a representative sample.
 
 ## Current outputs

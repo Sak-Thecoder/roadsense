@@ -1,5 +1,7 @@
 # RoadSense baseline status
 
+> **Audit record from 2026-11-15.** It describes the data before training. Since then the StreetSurfaceVis mapping and split were approved (2026-11-16) and the quality_v3 models were trained on them. See [docs/DATASET_UTILIZATION.md](../../../docs/DATASET_UTILIZATION.md) for how the data is used now.
+
 ## Labels and permissions
 
 | Source | Images | Original or proposed quality counts | Verified RoadSense labels | Training-ready now |

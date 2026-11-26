@@ -1,5 +1,7 @@
 # Duplicates and split leakage
 
+> **Audit record from 2026-11-15.** It describes the data before training. Since then the StreetSurfaceVis mapping and split were approved (2026-11-16) and the quality_v3 models were trained on them. See [docs/DATASET_UTILIZATION.md](../../../docs/DATASET_UTILIZATION.md) for how the data is used now.
+
 - CAM022 and CAM023 have identical SHA-256 hashes. Both originals and records are preserved and share the same duplicate group. CAM023 is excluded as the redundant copy; CAM022 remains blocked pending duplicate/group review and other metadata.
 - Existing integration audit: nine extra byte-identical images across the three sources; dHash at distance <=4 yielded 873 transitive components. Those groups are similarity candidates, not proof of duplication or common scene. Large components can be caused by chaining.
 - StreetSurfaceVis: the source authors describe `train=False` as the geographically held-out test set. We corrected the previous ambiguous `non_train` interpretation to `test` and kept all 776 test images separate. There are 15 direct train-to-test dHash candidate pairs, none byte-identical. Candidate distances and image IDs are in `street_cross_split_candidates.csv`. None of these 15 candidate pairs has recorded coordinates within 100 m. dHash can match unrelated scenes; inspect candidates before any exclusion.
