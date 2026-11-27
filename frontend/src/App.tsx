@@ -1,5 +1,5 @@
 import {lazy, Suspense} from 'react'
-import {ChartNoAxesColumn, Clock3, Layers3, ScanLine, Signpost} from 'lucide-react'
+import {ChartNoAxesColumn, Clock3, Layers3, ScanLine} from 'lucide-react'
 import {NavLink, Navigate, Route, Routes} from 'react-router-dom'
 import Home from './pages/Home'
 import Capture from './pages/Capture'
@@ -24,7 +24,7 @@ export default function App() {
   const count = models.filter(m => m.available).length
   return <div className="app-shell">
     <header className="site-header"><NavLink to="/" className="brand">
-      <span className="brand-icon"><Signpost size={21} aria-hidden/></span><span>RoadSense <small>AUPP · Road surface quality</small></span>
+      <img className="brand-icon" src="/favicon.svg" alt="" width={38} height={38}/><span>RoadSense <small>AUPP · Road surface quality</small></span>
     </NavLink>
     <span className={`status ${status}`}><span/>{status === 'loading' ? 'Connecting' : status === 'offline' ? 'API offline' : `${count} model${count===1?'':'s'} available`}</span></header>
     <nav className="navigation" aria-label="Main navigation">

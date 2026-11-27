@@ -22,7 +22,7 @@ h2 { font-size: 1rem; letter-spacing: -.012em; }
 .site-header { height: 68px; background: var(--paper); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: .6rem; padding: 0 clamp(.9rem, 3vw, 2.15rem); z-index: 2; position: sticky; top: 0; }
 .brand { display: inline-flex; align-items: center; gap: .7rem; font-size: 1.12rem; font-weight: 800; letter-spacing: -.025em; line-height: 1.2; }
 .brand small { display: block; font-weight: 500; color: var(--muted); font-size: .69rem; margin-top: .18rem; letter-spacing: .01em; }
-.brand-icon { display: grid; place-items: center; border-radius: 11px; width: 38px; height: 38px; color: #fff; background: var(--blue); flex: 0 0 auto; }
+.brand-icon { display: block; width: 38px; height: 38px; flex: 0 0 auto; }
 .status { border: 1px solid var(--line); border-radius: 99px; color: var(--muted); padding: .27rem .6rem; background: #f8fafe; white-space: nowrap; font-size: .72rem; font-weight: 650; }
 .status span { display: inline-block; background: #7989a4; width: 7px; height: 7px; border-radius: 50%; margin-right: .35rem; }
 .status.ready span { background: #21854d; }

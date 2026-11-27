@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#245ced"/>
+  <!-- road seen in perspective -->
+  <path d="M25 10h14l15 44H10z" fill="#1c2540"/>
+  <!-- dashed centre line -->
+  <path d="M32 14v6M32 25v8M32 38v11" stroke="#ffd43b" stroke-width="3.4" stroke-linecap="round" fill="none"/>
+  <!-- road edges -->
+  <path d="M25 10 10 54M39 10l15 44" stroke="#fff" stroke-width="2" stroke-linecap="round" fill="none"/>
+</svg>
