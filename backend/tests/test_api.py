@@ -89,6 +89,15 @@ def test_road_coverage_uses_confident_surfaces_in_lower_center():
     assert road_coverage(logits) == 0.5
 
 
+def test_road_coverage_counts_earth_for_unpaved_roads():
+    logits = np.zeros((150, 8, 8), dtype=np.float32)
+    logits[13, 4:, 2:6] = 12  # "earth, ground": how the model often labels gravel and dirt roads.
+    assert road_coverage(logits) == 1
+    logits[13] = 0
+    logits[9, 4:, 2:6] = 12  # Grass alone is not a road surface.
+    assert road_coverage(logits) == 0
+
+
 def test_preprocess_matches_keras():
     from tensorflow.keras.applications import efficientnet, mobilenet_v2, resnet50
 

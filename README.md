@@ -41,7 +41,7 @@ The trained models are not included in the repo. Put them in `backend/models/` a
 
 ## How it works
 
-1. **Road check:** SegFormer-B0 makes sure at least 12% of the lower-centre of the photo is road, path or sidewalk.
+1. **Road check:** SegFormer-B0 makes sure at least 18% of the lower-centre of the photo is road, path, sidewalk or dirt/gravel ground.
 2. **Preprocessing:** the photo is rotated using its EXIF data, cropped to the lower-centre road area and resized to 224×224.
 3. **Classification:** each model predicts *surface type × quality level*. A fixed layer then adds these up into Good, Moderate and Poor.
 

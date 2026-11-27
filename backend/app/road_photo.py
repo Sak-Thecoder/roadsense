@@ -27,8 +27,12 @@ MODEL_SHA256 = "9a98d6daf3d926869ab8cc4c2ed7374a2bc23b889bb7ca3b0915d15e3c4756bb
 # ImageNet mean and standard deviation per RGB channel, which SegFormer expects.
 IMAGE_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 IMAGE_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-# Zero-based ADE20K labels for road, sidewalk, path, and dirt track.
-SURFACE_LABELS = (6, 11, 52, 91)
+# Zero-based ADE20K labels that count as a drivable surface: road, sidewalk, path, dirt track
+# and earth/ground. Gravel and dirt roads are very often labelled "earth" by the model, so
+# leaving it out made the check reject many valid unpaved roads.
+SURFACE_LABELS = (6, 11, 52, 91, 13)
+# At least this fraction of the lower-centre region must be confident surface pixels.
+MIN_ROAD_COVERAGE = 0.18
 
 
 class RoadPhotoCheckUnavailable(RuntimeError):
@@ -96,8 +100,8 @@ class RoadPhotoValidator:
             coverage = road_coverage(logits)
         except Exception as exc:
             raise RoadPhotoCheckUnavailable("The road-photo check is temporarily unavailable. Try again later.") from exc
-        # Reject the photo if less than 12% of the focal region is confident road surface.
-        if coverage < 0.12:
+        # Reject the photo if too little of the focal region is confident road surface.
+        if coverage < MIN_ROAD_COVERAGE:
             raise InvalidImage("Invalid road photo. Choose an image with a clear road surface in the lower center.")
 
 
